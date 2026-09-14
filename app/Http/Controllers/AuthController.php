@@ -24,10 +24,13 @@ class AuthController extends Controller
             'email' => $data['email'],
             'password' => $data['password'],
             'role' => 'recruiter',
-            'status' => 'active',
+            'status' => 'pending',
         ]);
 
-        return response()->json($this->tokenResponse($user), 201);
+        return response()->json([
+            'message' => 'Registration submitted. An administrator must approve your account before you can log in.',
+            'user' => $user,
+        ], 201);
     }
 
     public function login(Request $request): JsonResponse
@@ -45,11 +48,19 @@ class AuthController extends Controller
             ]);
         }
 
+        if ($user->status === 'pending') {
+            throw ValidationException::withMessages([
+                'email' => ['Your account is pending administrator approval.'],
+            ]);
+        }
+
         if ($user->status !== 'active') {
             throw ValidationException::withMessages([
                 'email' => ['This account is inactive.'],
             ]);
         }
+
+        $user->forceFill(['last_login_at' => now()])->save();
 
         return response()->json($this->tokenResponse($user));
     }
@@ -67,6 +78,13 @@ class AuthController extends Controller
         }
 
         $user = $token->tokenable;
+
+        if ($user->status !== 'active') {
+            $token->delete();
+
+            return response()->json(['message' => 'This account is not approved.'], 403);
+        }
+
         $token->delete();
 
         return response()->json($this->tokenResponse($user));
