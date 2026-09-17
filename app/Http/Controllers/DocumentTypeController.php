@@ -8,8 +8,9 @@ use Illuminate\Http\Request;
 
 class DocumentTypeController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $this->requirePermission($request, 'document-types.view');
         return response()->json([
             'documentTypes' => DocumentType::query()
                 ->orderBy('id')
@@ -20,6 +21,7 @@ class DocumentTypeController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->requirePermission($request, 'document-types.create');
         $data = $this->validated($request);
         $documentType = DocumentType::create($this->attributes($data));
 
@@ -30,6 +32,7 @@ class DocumentTypeController extends Controller
 
     public function update(Request $request, DocumentType $documentType): JsonResponse
     {
+        $this->requirePermission($request, 'document-types.update');
         $data = $this->validated($request);
         $documentType->update($this->attributes($data));
 

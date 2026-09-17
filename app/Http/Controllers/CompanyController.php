@@ -8,8 +8,9 @@ use Illuminate\Http\Request;
 
 class CompanyController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $this->requirePermission($request, 'companies.view');
         return response()->json([
             'companies' => Company::query()
                 ->latest()
@@ -21,6 +22,7 @@ class CompanyController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->requirePermission($request, 'companies.create');
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'industry' => ['nullable', 'string', 'max:255'],
@@ -50,6 +52,7 @@ class CompanyController extends Controller
 
     public function update(Request $request, Company $company): JsonResponse
     {
+        $this->requirePermission($request, 'companies.update');
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'industry' => ['nullable', 'string', 'max:255'],
@@ -77,8 +80,9 @@ class CompanyController extends Controller
         ]);
     }
 
-    public function destroy(Company $company): JsonResponse
+    public function destroy(Request $request, Company $company): JsonResponse
     {
+        $this->requirePermission($request, 'companies.delete');
         $company->delete();
 
         return response()->json([
@@ -91,7 +95,7 @@ class CompanyController extends Controller
         return [
             'id' => (string) $company->id,
             'name' => $company->name,
-            'code' => 'CMP-' . str_pad((string) $company->id, 3, '0', STR_PAD_LEFT),
+            'code' => 'CMP-' . str_pad((string) $company->id, 2, '0', STR_PAD_LEFT),
             'industry' => $company->industry ?? '',
             'contactPerson' => $company->contact_person,
             'contactEmail' => $company->contact_email ?? '',

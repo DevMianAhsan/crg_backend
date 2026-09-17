@@ -26,6 +26,7 @@ class Candidate extends Model
         'passport_series',
         'passport_issued_by',
         'passport_issue_date',
+        'passport_history',
         'trade',
         'experience_years',
         'nationality',
@@ -51,6 +52,7 @@ class Candidate extends Model
 
     protected $casts = [
         'skills'              => 'array',
+        'passport_history'    => 'array',
         'passport_expiry'     => 'date',
         'passport_issue_date' => 'date',
         'joined_date'         => 'date',
