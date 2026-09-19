@@ -5,8 +5,16 @@ use App\Http\Controllers\CandidateController;
 use App\Http\Controllers\CompanyController;
 use App\Http\Controllers\DocumentTypeController;
 use App\Http\Controllers\DriveDocumentController;
+use App\Http\Controllers\LedgerController;
+use App\Http\Controllers\OcrController;
 use App\Http\Controllers\StaffController;
 use Illuminate\Support\Facades\Route;
+
+Route::post('ocr/extract', [OcrController::class, 'extract']);
+
+// Direct endpoints and /auth prefix endpoints
+Route::post('login', [AuthController::class, 'login']);
+Route::post('register', [AuthController::class, 'register']);
 
 Route::prefix('auth')->group(function (): void {
     Route::post('register', [AuthController::class, 'register']);
@@ -46,6 +54,12 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::patch('drive/documents/{driveDocument}', [DriveDocumentController::class, 'update']);
     Route::delete('drive/documents/{driveDocument}', [DriveDocumentController::class, 'destroy']);
 
+    // Ledger & Financial Records
+    Route::get('ledger', [LedgerController::class, 'index']);
+    Route::post('ledger', [LedgerController::class, 'store']);
+    Route::patch('ledger/{ledgerEntry}', [LedgerController::class, 'update']);
+    Route::delete('ledger/{ledgerEntry}', [LedgerController::class, 'destroy']);
+
     // Candidates — list & create
     Route::get('candidates', [CandidateController::class, 'index']);
     Route::post('candidates', [CandidateController::class, 'store']);
@@ -65,6 +79,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::patch('candidates/{candidate}/return', [CandidateController::class, 'returnToPool']);
     Route::post('candidates/{candidate}/withdraw', [CandidateController::class, 'withdraw']);
     Route::post('candidates/{candidate}/renew-passport', [CandidateController::class, 'renewPassport']);
+    Route::post('candidates/{candidate}/cv', [CandidateController::class, 'saveCv']);
 
     // Candidate Documents
     Route::post('candidates/{candidate}/documents', [CandidateController::class, 'storeDocument']);

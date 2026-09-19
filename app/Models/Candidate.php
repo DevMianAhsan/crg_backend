@@ -48,11 +48,24 @@ class Candidate extends Model
         'date_of_birth',
         'civil_status',
         'children_count',
+        'former_name',
+        'citizenship',
+        'town',
+        'country',
+        'occupation_field',
+        'cv_summary',
+        'cv_data',
+        'care_of',
+        'age',
+        'license',
+        'current_job',
+        'qualification',
     ];
 
     protected $casts = [
         'skills'              => 'array',
         'passport_history'    => 'array',
+        'cv_data'             => 'array',
         'passport_expiry'     => 'date',
         'passport_issue_date' => 'date',
         'joined_date'         => 'date',
@@ -60,6 +73,7 @@ class Candidate extends Model
         'expected_salary'     => 'decimal:2',
         'balance'             => 'decimal:2',
         'experience_years'    => 'integer',
+        'age'                 => 'integer',
     ];
 
     // --------------------------------------------------------------------------

@@ -10,7 +10,6 @@ class DocumentTypeController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $this->requirePermission($request, 'document-types.view');
         return response()->json([
             'documentTypes' => DocumentType::query()
                 ->orderBy('id')
