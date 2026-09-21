@@ -68,6 +68,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('candidates/template/download', [CandidateController::class, 'downloadTemplate']);
     Route::post('candidates/bulk', [CandidateController::class, 'bulkStore']);
     Route::post('candidates/shift', [CandidateController::class, 'shiftToCompany']);
+    Route::get('candidates/share/{token}', [CandidateController::class, 'showShared']);
 
     // Candidates — single resource
     Route::get('candidates/{candidate}', [CandidateController::class, 'show']);
@@ -78,6 +79,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::patch('candidates/{candidate}/status', [CandidateController::class, 'updateStatus']);
     Route::patch('candidates/{candidate}/return', [CandidateController::class, 'returnToPool']);
     Route::post('candidates/{candidate}/withdraw', [CandidateController::class, 'withdraw']);
+    Route::post('candidates/{candidate}/reactivate', [CandidateController::class, 'reactivate']);
     Route::post('candidates/{candidate}/renew-passport', [CandidateController::class, 'renewPassport']);
     Route::post('candidates/{candidate}/cv', [CandidateController::class, 'saveCv']);
 

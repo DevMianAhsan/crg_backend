@@ -46,7 +46,11 @@ class CandidateController extends Controller
         }
 
         if ($status = $request->query('status')) {
-            $query->where('status', $status);
+            if ($status === 'active') {
+                $query->whereIn('status', ['available', 'active']);
+            } else {
+                $query->where('status', $status);
+            }
         }
 
         if ($companyId = $request->query('company_id')) {
@@ -57,10 +61,42 @@ class CandidateController extends Controller
             }
         }
 
+        if ($trade = $request->query('trade')) {
+            $query->where('trade', 'ilike', "%{$trade}%");
+        }
+
         $candidates = $query->get();
+
+        // Calculate counts across candidates (scoped by company if filtered)
+        $countsQuery = Candidate::query();
+        if ($companyId = $request->query('company_id')) {
+            if ($companyId === 'unassigned') {
+                $countsQuery->whereNull('current_company_id');
+            } else {
+                $countsQuery->where('current_company_id', $companyId);
+            }
+        }
+
+        $rawCounts = (clone $countsQuery)
+            ->select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
+            ->pluck('count', 'status')
+            ->toArray();
+
+        $totalCount = (clone $countsQuery)->count();
+        $availableCount = ($rawCounts['available'] ?? 0) + ($rawCounts['active'] ?? 0);
 
         return response()->json([
             'candidates' => $candidates->map(fn (Candidate $c): array => $this->presentList($c))->values(),
+            'counts' => [
+                'all' => $totalCount,
+                'active' => $availableCount,
+                'available' => $availableCount,
+                'processing' => $rawCounts['processing'] ?? 0,
+                'placed' => $rawCounts['placed'] ?? 0,
+                'on_hold' => $rawCounts['on_hold'] ?? 0,
+                'withdrawn' => $rawCounts['withdrawn'] ?? 0,
+            ],
         ]);
     }
 
@@ -1237,12 +1273,48 @@ class CandidateController extends Controller
             ]);
         }
 
-        $shareableUrl = url('/share/' . $sharedToken);
+        $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+        $shareableUrl = $frontendUrl . '/share/' . $sharedToken;
 
         return response()->json([
             'message'      => count($candidates) . ' candidate(s) shifted to ' . $company->name,
             'shareableUrl' => $shareableUrl,
             'sharedToken'  => $sharedToken,
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
+    // Shared Candidate View — GET /candidates/share/{token}
+    // --------------------------------------------------------------------------
+
+    public function showShared(Request $request, string $token): JsonResponse
+    {
+        // Authenticated user required (enforced by auth:sanctum)
+        $submission = CandidateSubmission::where('share_token', $token)->first();
+
+        if (! $submission) {
+            $submission = CandidateSubmission::where('share_token', 'like', $token . '%')->first();
+        }
+
+        if (! $submission) {
+            return response()->json([
+                'message' => 'Candidate share link not found or expired.',
+            ], 404);
+        }
+
+        $candidate = $submission->candidate()
+            ->with(['company', 'documents', 'submissions', 'withdrawal'])
+            ->first();
+
+        if (! $candidate) {
+            return response()->json([
+                'message' => 'Candidate record not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'candidate'  => $this->presentDetail($candidate),
+            'submission' => $this->presentSubmission($submission),
         ]);
     }
 
@@ -1312,6 +1384,26 @@ class CandidateController extends Controller
     }
 
     // --------------------------------------------------------------------------
+    // Reactivate / Re-enable — POST /candidates/{candidate}/reactivate
+    // --------------------------------------------------------------------------
+
+    public function reactivate(Request $request, Candidate $candidate): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.update');
+
+        // Delete candidate withdrawal record if any
+        $candidate->withdrawal()?->delete();
+
+        // Restore candidate status to available
+        $candidate->update(['status' => 'available']);
+
+        return response()->json([
+            'candidate' => $this->presentDetail($candidate->fresh()->load(['company', 'documents', 'submissions', 'withdrawal'])),
+            'message'   => 'Candidate re-enabled successfully and set to Available.',
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
     // Upload Document — POST /candidates/{candidate}/documents
     // --------------------------------------------------------------------------
 
@@ -1322,6 +1414,7 @@ class CandidateController extends Controller
             'title'            => ['required', 'string', 'max:255'],
             'documentTypeId'   => ['nullable', 'string'],
             'documentTypeName' => ['nullable', 'string', 'max:100'],
+            'documentNumber'   => ['nullable', 'string', 'max:255'],
             'file'             => ['nullable', 'file', 'max:102400'], // 100 MB
             'issueDate'        => ['nullable', 'date'],
             'expiryDate'       => ['nullable', 'date'],
@@ -1363,6 +1456,7 @@ class CandidateController extends Controller
             'title'              => $data['title'],
             'document_type_id'   => $data['documentTypeId'] ?? 'doc-type-1',
             'document_type_name' => $data['documentTypeName'] ?? 'Compliance Document',
+            'document_number'    => $data['documentNumber'] ?? null,
             'file_path'          => $filePath,
             'file_name'          => $fileName,
             'file_size'          => $fileSize,
@@ -1393,6 +1487,7 @@ class CandidateController extends Controller
             'title'            => ['sometimes', 'string', 'max:255'],
             'documentTypeId'   => ['sometimes', 'string'],
             'documentTypeName' => ['sometimes', 'string', 'max:100'],
+            'documentNumber'   => ['sometimes', 'nullable', 'string', 'max:255'],
             'file'             => ['nullable', 'file', 'max:102400'], // 100 MB
             'issueDate'        => ['nullable', 'date'],
             'expiryDate'       => ['nullable', 'date'],
@@ -1454,6 +1549,10 @@ class CandidateController extends Controller
             'notes'              => $data['notes'] ?? null,
             'status'             => $data['status'] ?? null,
         ], fn ($v) => $v !== null);
+
+        if (array_key_exists('documentNumber', $data)) {
+            $updateData['document_number'] = $data['documentNumber'];
+        }
 
         $document->update($updateData);
 
@@ -1708,6 +1807,7 @@ class CandidateController extends Controller
             'title'            => $doc->title,
             'documentTypeId'   => $doc->document_type_id,
             'documentTypeName' => $doc->document_type_name,
+            'documentNumber'   => $doc->document_number ?? '',
             'fileUrl'          => $doc->file_url ?? '#',
             'filePreviewUrl'   => $doc->file_url,
             'fileName'         => $doc->file_name ?? '',
@@ -1722,6 +1822,8 @@ class CandidateController extends Controller
 
     private function presentSubmission(CandidateSubmission $sub): array
     {
+        $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+
         return [
             'id'           => (string) $sub->id,
             'candidateId'  => (string) $sub->candidate_id,
@@ -1730,7 +1832,7 @@ class CandidateController extends Controller
             'shiftedAt'    => $sub->shifted_at?->format('Y-m-d H:i'),
             'note'         => $sub->note ?? '',
             'shiftedBy'    => $sub->shifted_by ?? '',
-            'shareableUrl' => url('/share/' . $sub->share_token),
+            'shareableUrl' => $frontendUrl . '/share/' . $sub->share_token,
         ];
     }
 

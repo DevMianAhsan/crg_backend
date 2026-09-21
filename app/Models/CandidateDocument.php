@@ -13,6 +13,7 @@ class CandidateDocument extends Model
         'title',
         'document_type_id',
         'document_type_name',
+        'document_number',
         'file_path',
         'file_name',
         'file_size',
@@ -31,6 +32,11 @@ class CandidateDocument extends Model
     public function candidate(): BelongsTo
     {
         return $this->belongsTo(Candidate::class);
+    }
+
+    public function documentType(): BelongsTo
+    {
+        return $this->belongsTo(DocumentType::class, 'document_type_id');
     }
 
     /** Full public URL for the document file. */

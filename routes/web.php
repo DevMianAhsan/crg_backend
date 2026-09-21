@@ -21,3 +21,8 @@ Route::get('/storage/{path}', function (string $path) {
         'Access-Control-Allow-Methods' => 'GET, OPTIONS',
     ]);
 })->where('path', '.*');
+
+Route::get('/share/{token}', function (string $token) {
+    $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+    return redirect("{$frontendUrl}/share/{$token}");
+});

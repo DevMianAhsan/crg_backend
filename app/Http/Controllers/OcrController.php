@@ -52,28 +52,35 @@ class OcrController extends Controller
         $base64Data = base64_encode(file_get_contents($file->getRealPath()));
 
         $prompt = <<<PROMPT
-You are an expert travel, medical, and compliance document analyst.
-Analyze this document image thoroughly (it could be a Passport, Medical Fitness Certificate, Visa, Driving License, National ID, or Compliance Certificate).
+You are an expert travel, identification, medical, and compliance document analyst.
+Analyze this document image thoroughly. It could be a:
+- Passport (with passport number, dates, MRZ)
+- CNIC / National Identity Card / Smart Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date)
+- Character Certificate / Police Clearance Certificate (with certificate/reference number, issue date, validity/expiry date)
+- Medical Fitness Certificate / GAMCA (with report/slip number, test date, expiry date)
+- Driving License (with license number, issue date, expiry date)
+- Trade Skill Certificate / Educational Certificate (with certificate/roll number, issue date)
+- Visa / Entry Permit
 
 Extract all visible details and return ONLY a valid JSON object with this exact structure:
 {
-  "document_type": string (e.g. "Passport", "Medical Certificate", "Visa", "National ID", or "Compliance Document"),
-  "title": string (suggested title e.g. "Passport - DANIEL CAMPBELL" or "GAMCA Medical Fitness Certificate"),
-  "issuing_country": string or null (Full official country title, e.g. "United Kingdom" or "Pakistan"),
-  "country_code": string or null (3-letter ISO code, e.g. "GBR", "PAK"),
-  "document_number": string or null (The main passport/document/certificate number),
-  "surname": string or null (Last name),
+  "document_type": string (e.g. "Passport", "CNIC / National Identity Card", "Character Certificate / Police Clearance", "Medical Fitness Certificate", "Driving License", "Trade Skill Certificate", "Visa", or "Compliance Document"),
+  "title": string (suggested concise title e.g. "Passport - DANIEL CAMPBELL", "CNIC Card - MUHAMMAD UMAIR", "Police Character Certificate", or "GAMCA Medical Fitness"),
+  "issuing_country": string or null (Full official country title, e.g. "Pakistan" or "United Kingdom"),
+  "country_code": string or null (3-letter ISO code, e.g. "PAK", "GBR"),
+  "document_number": string or null (The main number: passport number, CNIC identity number, certificate reference number, or license number),
+  "surname": string or null (Last name / father name if applicable),
   "given_names": string or null (First & middle names),
-  "nationality": string or null (e.g. "Pakistani", "British Citizen"),
+  "nationality": string or null (e.g. "Pakistani"),
   "date_of_birth": string or null ("YYYY-MM-DD" format),
   "gender": string or null ("M", "F", or "X"),
   "place_of_birth": string or null,
-  "authority": string or null (e.g. "HMPO", "Ministry of Health", "GAMCA"),
+  "authority": string or null (e.g. "NADRA", "Islamabad Police", "Punjab Police", "HMPO", "Ministry of Health", "GAMCA"),
   "date_of_issue": string or null ("YYYY-MM-DD" format),
   "date_of_expiry": string or null ("YYYY-MM-DD" format),
   "mrz_line1": string or null (Bottom MRZ first line if passport),
   "mrz_line2": string or null (Bottom MRZ second line if passport),
-  "notes": string or null (Concise verification summary remarks, e.g. "Passport No: 391896152 | Issued by: HMPO | Expiry: 2036-09-14")
+  "notes": string or null (Concise verification summary remarks, e.g. "Doc No: 35202-1234567-1 | Issued by: NADRA | Expiry: 2032-05-10")
 }
 PROMPT;
 
