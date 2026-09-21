@@ -11,6 +11,7 @@ use App\Http\Controllers\StaffController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('ocr/extract', [OcrController::class, 'extract']);
+Route::get('candidates/share/{token}', [CandidateController::class, 'showShared']);
 
 // Direct endpoints and /auth prefix endpoints
 Route::post('login', [AuthController::class, 'login']);
@@ -68,7 +69,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('candidates/template/download', [CandidateController::class, 'downloadTemplate']);
     Route::post('candidates/bulk', [CandidateController::class, 'bulkStore']);
     Route::post('candidates/shift', [CandidateController::class, 'shiftToCompany']);
-    Route::get('candidates/share/{token}', [CandidateController::class, 'showShared']);
+    Route::post('candidates/share', [CandidateController::class, 'createShare']);
 
     // Candidates — single resource
     Route::get('candidates/{candidate}', [CandidateController::class, 'show']);
