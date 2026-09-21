@@ -15,10 +15,9 @@ class OcrController extends Controller
      * Google Gemini model candidates to attempt in order of preference.
      */
     protected array $candidateModels = [
-        'gemini-3.8-flash',
-        'gemini-flash-latest',
+        'gemini-3.1-flash-lite',
         'gemini-3.5-flash-lite',
-        'gemini-3.6-flash',
+        'gemini-flash-lite-latest',
     ];
 
     /**
@@ -48,15 +47,53 @@ class OcrController extends Controller
             ]);
         }
 
+        $realPath = $file->getRealPath();
         $mimeType = $file->getMimeType() ?: 'image/jpeg';
-        $base64Data = base64_encode(file_get_contents($file->getRealPath()));
+        $base64Data = null;
+
+        // Optimize high-resolution document scans to accelerate Gemini transfer (<4s response)
+        if (str_starts_with($mimeType, 'image/') && function_exists('imagecreatefromstring')) {
+            try {
+                $rawContent = file_get_contents($realPath);
+                $gdImg = @imagecreatefromstring($rawContent);
+                if ($gdImg !== false) {
+                    $w = imagesx($gdImg);
+                    $h = imagesy($gdImg);
+                    $maxDim = 1280;
+                    if ($w > $maxDim || $h > $maxDim) {
+                        $scale = min($maxDim / $w, $maxDim / $h);
+                        $newW = (int) ($w * $scale);
+                        $newH = (int) ($h * $scale);
+                        $resized = imagecreatetruecolor($newW, $newH);
+                        imagecopyresampled($resized, $gdImg, 0, 0, 0, 0, $newW, $newH, $w, $h);
+                        ob_start();
+                        imagejpeg($resized, null, 85);
+                        $compressed = ob_get_clean();
+                        imagedestroy($resized);
+                        imagedestroy($gdImg);
+                        if ($compressed && strlen($compressed) > 0) {
+                            $base64Data = base64_encode($compressed);
+                            $mimeType = 'image/jpeg';
+                        }
+                    } else {
+                        imagedestroy($gdImg);
+                    }
+                }
+            } catch (Exception $e) {
+                // Ignore and fall back to raw file content
+            }
+        }
+
+        if (!$base64Data) {
+            $base64Data = base64_encode(file_get_contents($realPath));
+        }
 
         $prompt = <<<PROMPT
 You are an expert travel, identification, medical, and compliance document analyst.
 Analyze this document image thoroughly. It could be a:
 - Passport (with passport number, dates, MRZ)
 - CNIC / National Identity Card / Smart Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date)
-- Character Certificate / Police Clearance Certificate (with certificate/reference number, issue date, validity/expiry date)
+- Character Certificate / Police Clearance Certificate (with certificate/reference number like FSD-12765678 or CKW-4755780, issue date. IMPORTANT: In Pakistan, Police Character Certificates are valid for exactly 180 days (6 months) from the date of issue. The date_of_expiry MUST be exactly 180 days after date_of_issue, e.g. issued 2023-08-31 -> expires 2024-02-27, NEVER jump to 2026)
 - Medical Fitness Certificate / GAMCA (with report/slip number, test date, expiry date)
 - Driving License (with license number, issue date, expiry date)
 - Trade Skill Certificate / Educational Certificate (with certificate/roll number, issue date)
@@ -91,7 +128,7 @@ PROMPT;
             try {
                 $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . trim($apiKey);
 
-                $response = Http::timeout(45)->withHeaders([
+                $response = Http::timeout(25)->withHeaders([
                     'Content-Type' => 'application/json',
                 ])->post($endpoint, [
                     'contents' => [
@@ -147,6 +184,26 @@ PROMPT;
         $issueDate = $this->formatDateSafe($extractedJson['date_of_issue'] ?? null);
         $expiryDate = $this->formatDateSafe($extractedJson['date_of_expiry'] ?? null);
         $dob = $this->formatDateSafe($extractedJson['date_of_birth'] ?? null);
+
+        // Enforce 180-day validity rule for Character Certificate / Police Clearance
+        $rawDocType = strtolower(($extractedJson['document_type'] ?? '') . ' ' . ($extractedJson['title'] ?? ''));
+        $isCharacterCert = str_contains($rawDocType, 'character') || str_contains($rawDocType, 'police') || str_contains($rawDocType, 'clearance') || str_contains($rawDocType, 'crecter');
+
+        if ($isCharacterCert && $issueDate) {
+            try {
+                $calc180 = Carbon::parse($issueDate)->addDays(180)->format('Y-m-d');
+                if (!$expiryDate) {
+                    $expiryDate = $calc180;
+                } else {
+                    $diff = abs(Carbon::parse($expiryDate)->diffInDays(Carbon::parse($calc180)));
+                    if ($diff > 15) {
+                        $expiryDate = $calc180;
+                    }
+                }
+            } catch (Exception $e) {
+                // Fallback to original
+            }
+        }
 
         // Build notes if missing
         $notes = $extractedJson['notes'] ?? null;

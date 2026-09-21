@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Candidate;
 use App\Models\CandidateDocument;
+use App\Models\CandidateShare;
 use App\Models\CandidateSubmission;
 use App\Models\CandidateWithdrawal;
 use App\Models\Company;
@@ -1249,7 +1250,7 @@ class CandidateController extends Controller
             'note'           => ['nullable', 'string', 'max:500'],
         ]);
 
-        $company    = Company::findOrFail($data['companyId']);
+        $company     = Company::findOrFail($data['companyId']);
         $sharedToken = Str::random(32);
         $shiftedAt   = now();
         $shiftedBy   = $request->user()->name ?? 'System';
@@ -1273,11 +1274,66 @@ class CandidateController extends Controller
             ]);
         }
 
-        $frontendUrl = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+        // Record the batch share for multi-candidate shareable view
+        CandidateShare::create([
+            'share_token'   => $sharedToken,
+            'title'         => 'Shifted to ' . $company->name,
+            'note'          => $data['note'] ?? null,
+            'company_id'    => $company->id,
+            'company_name'  => $company->name,
+            'candidate_ids' => $candidates->pluck('id')->values()->toArray(),
+            'created_by'    => $shiftedBy,
+        ]);
+
+        $frontendUrl  = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
         $shareableUrl = $frontendUrl . '/share/' . $sharedToken;
 
         return response()->json([
             'message'      => count($candidates) . ' candidate(s) shifted to ' . $company->name,
+            'shareableUrl' => $shareableUrl,
+            'sharedToken'  => $sharedToken,
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
+    // Share Candidates Batch — POST /candidates/share
+    // --------------------------------------------------------------------------
+
+    public function createShare(Request $request): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.view');
+        $data = $request->validate([
+            'candidateIds'   => ['required', 'array', 'min:1'],
+            'candidateIds.*' => ['required', 'integer', 'exists:candidates,id'],
+            'title'          => ['nullable', 'string', 'max:255'],
+            'note'           => ['nullable', 'string', 'max:1000'],
+            'companyId'      => ['nullable', 'integer', 'exists:companies,id'],
+        ]);
+
+        $companyName = null;
+        if (! empty($data['companyId'])) {
+            $company = Company::find($data['companyId']);
+            $companyName = $company?->name;
+        }
+
+        $sharedToken = Str::random(32);
+        $createdBy   = $request->user()->name ?? 'System';
+
+        CandidateShare::create([
+            'share_token'   => $sharedToken,
+            'title'         => $data['title'] ?? 'Candidate Profiles Package',
+            'note'          => $data['note'] ?? null,
+            'company_id'    => $data['companyId'] ?? null,
+            'company_name'  => $companyName,
+            'candidate_ids' => array_values($data['candidateIds']),
+            'created_by'    => $createdBy,
+        ]);
+
+        $frontendUrl  = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+        $shareableUrl = $frontendUrl . '/share/' . $sharedToken;
+
+        return response()->json([
+            'message'      => count($data['candidateIds']) . ' candidate(s) shareable link created',
             'shareableUrl' => $shareableUrl,
             'sharedToken'  => $sharedToken,
         ]);
@@ -1289,32 +1345,76 @@ class CandidateController extends Controller
 
     public function showShared(Request $request, string $token): JsonResponse
     {
-        // Authenticated user required (enforced by auth:sanctum)
-        $submission = CandidateSubmission::where('share_token', $token)->first();
+        // 1. Check if token exists in candidate_shares
+        $share = CandidateShare::where('share_token', $token)->first();
 
-        if (! $submission) {
-            $submission = CandidateSubmission::where('share_token', 'like', $token . '%')->first();
+        if ($share) {
+            $candidateIds = $share->candidate_ids ?? [];
+            $candidates = Candidate::whereIn('id', $candidateIds)
+                ->with(['company', 'documents', 'submissions', 'withdrawal'])
+                ->get();
+
+            // Maintain order of candidateIds
+            $orderMap = array_flip($candidateIds);
+            $candidates = $candidates->sortBy(fn ($c) => $orderMap[$c->id] ?? 999999)->values();
+            $presentedCandidates = $candidates->map(fn ($c) => $this->presentDetail($c))->values();
+
+            $submissionSummary = null;
+            if ($share->company_name || $share->company_id) {
+                $submissionSummary = [
+                    'id'           => (string) $share->id,
+                    'candidateId'  => (string) ($candidateIds[0] ?? ''),
+                    'companyId'    => (string) ($share->company_id ?? ''),
+                    'companyName'  => $share->company_name ?? '',
+                    'shiftedAt'    => $share->created_at?->format('Y-m-d H:i'),
+                    'note'         => $share->note ?? '',
+                    'shiftedBy'    => $share->created_by ?? '',
+                    'shareableUrl' => rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/') . '/share/' . $share->share_token,
+                ];
+            }
+
+            return response()->json([
+                'token'           => $share->share_token,
+                'title'           => $share->title ?? 'Candidate Package',
+                'note'            => $share->note ?? '',
+                'companyName'     => $share->company_name ?? '',
+                'shiftedAt'       => $share->created_at?->format('Y-m-d H:i'),
+                'shiftedBy'       => $share->created_by ?? '',
+                'totalCandidates' => count($presentedCandidates),
+                'candidates'      => $presentedCandidates,
+                'candidate'       => $presentedCandidates[0] ?? null,
+                'submission'      => $submissionSummary,
+            ]);
         }
 
-        if (! $submission) {
+        // 2. Fallback to candidate_submissions for legacy links or prefix matches
+        $submissions = CandidateSubmission::where('share_token', $token)
+            ->orWhere('share_token', 'like', $token . '-%')
+            ->orWhere('share_token', 'like', $token . '%')
+            ->with(['candidate.company', 'candidate.documents', 'candidate.submissions', 'candidate.withdrawal', 'company'])
+            ->get();
+
+        if ($submissions->isEmpty()) {
             return response()->json([
                 'message' => 'Candidate share link not found or expired.',
             ], 404);
         }
 
-        $candidate = $submission->candidate()
-            ->with(['company', 'documents', 'submissions', 'withdrawal'])
-            ->first();
-
-        if (! $candidate) {
-            return response()->json([
-                'message' => 'Candidate record not found.',
-            ], 404);
-        }
+        $candidates = $submissions->pluck('candidate')->filter()->unique('id')->values();
+        $presentedCandidates = $candidates->map(fn ($c) => $this->presentDetail($c))->values();
+        $firstSub = $submissions->first();
 
         return response()->json([
-            'candidate'  => $this->presentDetail($candidate),
-            'submission' => $this->presentSubmission($submission),
+            'token'           => $token,
+            'title'           => $firstSub ? 'Shifted to ' . $firstSub->company_name : 'Shared Candidates',
+            'note'            => $firstSub?->note ?? '',
+            'companyName'     => $firstSub?->company_name ?? '',
+            'shiftedAt'       => $firstSub?->shifted_at?->format('Y-m-d H:i'),
+            'shiftedBy'       => $firstSub?->shifted_by ?? '',
+            'totalCandidates' => count($presentedCandidates),
+            'candidates'      => $presentedCandidates,
+            'candidate'       => $presentedCandidates[0] ?? null,
+            'submission'      => $firstSub ? $this->presentSubmission($firstSub) : null,
         ]);
     }
 
