@@ -15,9 +15,11 @@ class OcrController extends Controller
      * Google Gemini model candidates to attempt in order of preference.
      */
     protected array $candidateModels = [
-        'gemini-3.1-flash-lite',
-        'gemini-3.5-flash-lite',
         'gemini-flash-lite-latest',
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-3.6-flash',
+        'gemini-flash-latest',
     ];
 
     /**
@@ -31,7 +33,7 @@ class OcrController extends Controller
             return response()->json([
                 'success' => false,
                 'fallbackToLocal' => true,
-                'message' => 'No valid document file uploaded. Please provide an image file.',
+                'message' => 'No valid document file uploaded. Please provide an image or PDF file.',
             ], 400);
         }
 
@@ -48,7 +50,11 @@ class OcrController extends Controller
         }
 
         $realPath = $file->getRealPath();
+        $ext = strtolower($file->getClientOriginalExtension());
         $mimeType = $file->getMimeType() ?: 'image/jpeg';
+        if ($ext === 'pdf') {
+            $mimeType = 'application/pdf';
+        }
         $base64Data = null;
 
         // Optimize high-resolution document scans to accelerate Gemini transfer (<4s response)
@@ -90,14 +96,23 @@ class OcrController extends Controller
 
         $prompt = <<<PROMPT
 You are an expert travel, identification, medical, and compliance document analyst.
-Analyze this document image thoroughly. It could be a:
-- Passport (with passport number, dates, MRZ)
-- CNIC / National Identity Card / Smart Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date)
-- Character Certificate / Police Clearance Certificate (with certificate/reference number like FSD-12765678 or CKW-4755780, issue date. IMPORTANT: In Pakistan, Police Character Certificates are valid for exactly 180 days (6 months) from the date of issue. The date_of_expiry MUST be exactly 180 days after date_of_issue, e.g. issued 2023-08-31 -> expires 2024-02-27, NEVER jump to 2026)
-- Medical Fitness Certificate / GAMCA (with report/slip number, test date, expiry date)
-- Driving License (with license number, issue date, expiry date)
-- Trade Skill Certificate / Educational Certificate (with certificate/roll number, issue date)
-- Visa / Entry Permit
+Analyze this document (image or PDF) thoroughly.
+
+CRITICAL RULES FOR PAKISTANI PASSPORTS:
+1. When two pages of an open passport booklet are visible (the green inside cover page with the Pakistan emblem on one side, and the bio-data page with applicant photograph and MRZ lines on the other side):
+   - The large bold number starting with 'G' printed on the green inside cover page (e.g. G8863371, G4427638) is ONLY a booklet/tracking number. It is NOT the passport number!
+   - You MUST extract the official Passport Number from the BIO-DATA page (under 'Passport No.', beside/above the photo, and in the bottom/edge MRZ lines, e.g. JA1910572, ST1170261).
+   - If the bio-data page is rotated sideways (90 degrees or 270 degrees), read the text and MRZ according to its orientation.
+   - The passport number in the MRZ line 2 ALWAYS starts with the 9-character passport number (e.g. JA1910572, ST1170261).
+2. For Character Certificate / Police Clearance:
+   - Extract the certificate reference number (e.g. FSD-12765678, CKW-4755780). DO NOT use the applicant's passport number mentioned in the text.
+   - In Pakistan, Police Character Certificates are valid for exactly 180 days (6 months) from the date of issue. The date_of_expiry MUST be exactly 180 days after date_of_issue.
+3. Other documents:
+   - CNIC / National Identity Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date)
+   - Medical Fitness Certificate / GAMCA (with report/slip number, test date, expiry date)
+   - Driving License (with license number, issue date, expiry date)
+   - Trade Skill Certificate / Educational Certificate (with certificate/roll number, issue date)
+   - Visa / Entry Permit
 
 Extract all visible details and return ONLY a valid JSON object with this exact structure:
 {
@@ -202,6 +217,20 @@ PROMPT;
                 }
             } catch (Exception $e) {
                 // Fallback to original
+            }
+        }
+
+        // Infer Passport Issue Date if missing and expiry date is present
+        $isPassport = str_contains($rawDocType, 'passport') || !empty($extractedJson['mrz_line2']);
+        if ($isPassport && $expiryDate && !$issueDate) {
+            try {
+                $expCarbon = Carbon::parse($expiryDate);
+                $expYear = $expCarbon->year;
+                $currentYear = Carbon::now()->year;
+                $validity = ($expYear - $currentYear > 5) ? 10 : 5;
+                $issueDate = $expCarbon->copy()->subYears($validity)->addDay()->format('Y-m-d');
+            } catch (Exception $e) {
+                // Fallback
             }
         }
 
