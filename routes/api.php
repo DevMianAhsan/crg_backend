@@ -41,7 +41,6 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('document-types/{documentType}', [DocumentTypeController::class, 'destroy']);
 
     // Countries
-    Route::get('countries', [CountryController::class, 'index']);
     Route::post('countries', [CountryController::class, 'store']);
     Route::patch('countries/{country}', [CountryController::class, 'update']);
     Route::delete('countries/{country}', [CountryController::class, 'destroy']);
