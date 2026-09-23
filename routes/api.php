@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CandidateController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\CountryController;
 use App\Http\Controllers\DocumentTypeController;
 use App\Http\Controllers\DriveDocumentController;
 use App\Http\Controllers\LedgerController;
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('ocr/extract', [OcrController::class, 'extract']);
 Route::get('candidates/share/{token}', [CandidateController::class, 'showShared']);
+Route::get('countries', [CountryController::class, 'index']);
 
 // Direct endpoints and /auth prefix endpoints
 Route::post('login', [AuthController::class, 'login']);
@@ -36,6 +38,13 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('document-types', [DocumentTypeController::class, 'index']);
     Route::post('document-types', [DocumentTypeController::class, 'store']);
     Route::patch('document-types/{documentType}', [DocumentTypeController::class, 'update']);
+    Route::delete('document-types/{documentType}', [DocumentTypeController::class, 'destroy']);
+
+    // Countries
+    Route::get('countries', [CountryController::class, 'index']);
+    Route::post('countries', [CountryController::class, 'store']);
+    Route::patch('countries/{country}', [CountryController::class, 'update']);
+    Route::delete('countries/{country}', [CountryController::class, 'destroy']);
 
     // Staff
     Route::get('staff/me', [StaffController::class, 'me']);

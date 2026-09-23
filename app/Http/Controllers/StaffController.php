@@ -20,7 +20,7 @@ class StaffController extends Controller
         'companies.view', 'companies.create', 'companies.update', 'companies.delete',
         'ledger.view', 'ledger.create', 'ledger.update', 'ledger.delete',
         'drive.view', 'drive.create', 'drive.update', 'drive.delete',
-        'document-types.view', 'document-types.create', 'document-types.update',
+        'document-types.view', 'document-types.create', 'document-types.update', 'document-types.delete',
     ];
 
     public function me(Request $request): JsonResponse
@@ -69,7 +69,7 @@ class StaffController extends Controller
                 ]),
                 $this->catalogueGroup('Document Types', '/dashboard/settings/document-types', [
                     'document-types.view' => 'View document types', 'document-types.create' => 'Add document types',
-                    'document-types.update' => 'Edit document types',
+                    'document-types.update' => 'Edit document types', 'document-types.delete' => 'Delete document types',
                 ]),
                 $this->catalogueGroup('Staff', '/dashboard/staff', [
                     'staff.view' => 'View staff page', 'staff.create' => 'Add staff members',
