@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CandidateDocument;
 use App\Models\DocumentType;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class DocumentTypeController extends Controller
 {
@@ -32,7 +34,7 @@ class DocumentTypeController extends Controller
     public function update(Request $request, DocumentType $documentType): JsonResponse
     {
         $this->requirePermission($request, 'document-types.update');
-        $data = $this->validated($request);
+        $data = $this->validated($request, $documentType);
         $documentType->update($this->attributes($data));
 
         return response()->json([
@@ -40,11 +42,38 @@ class DocumentTypeController extends Controller
         ]);
     }
 
-    private function validated(Request $request): array
+    public function destroy(Request $request, DocumentType $documentType): JsonResponse
+    {
+        $this->requirePermission($request, 'document-types.delete');
+
+        $inUseCount = CandidateDocument::query()
+            ->where('document_type_id', (string) $documentType->id)
+            ->orWhere('document_type_id', $documentType->code)
+            ->count();
+
+        if ($inUseCount > 0) {
+            return response()->json([
+                'message' => "Cannot delete document type '{$documentType->name}' because {$inUseCount} candidate document(s) are associated with it.",
+            ], 422);
+        }
+
+        $documentType->delete();
+
+        return response()->json([
+            'message' => 'Document type deleted successfully.',
+        ]);
+    }
+
+    private function validated(Request $request, ?DocumentType $documentType = null): array
     {
         return $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'code' => ['required', 'string', 'max:100'],
+            'code' => [
+                'required',
+                'string',
+                'max:100',
+                Rule::unique('document_types', 'code')->ignore($documentType?->id),
+            ],
             'description' => ['nullable', 'string'],
             'isMandatory' => ['required', 'boolean'],
             'validityMonths' => ['required', 'integer', 'min:0'],

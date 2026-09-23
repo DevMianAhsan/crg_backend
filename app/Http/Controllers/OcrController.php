@@ -104,11 +104,13 @@ CRITICAL RULES FOR PAKISTANI PASSPORTS:
    - You MUST extract the official Passport Number from the BIO-DATA page (under 'Passport No.', beside/above the photo, and in the bottom/edge MRZ lines, e.g. JA1910572, ST1170261).
    - If the bio-data page is rotated sideways (90 degrees or 270 degrees), read the text and MRZ according to its orientation.
    - The passport number in the MRZ line 2 ALWAYS starts with the 9-character passport number (e.g. JA1910572, ST1170261).
+   - CRITICAL FOR CNIC / NATIONAL ID: On Pakistani passports, also extract the 13-digit National Identity Card number / CNIC found under "National ID No." or "No. d'identification nationale" or "Identity No." (e.g. 33100-1234567-1 or 3310012345671) into the "cnic" field formatted as XXXXX-XXXXXXX-X.
 2. For Character Certificate / Police Clearance:
    - Extract the certificate reference number (e.g. FSD-12765678, CKW-4755780). DO NOT use the applicant's passport number mentioned in the text.
    - In Pakistan, Police Character Certificates are valid for exactly 180 days (6 months) from the date of issue. The date_of_expiry MUST be exactly 180 days after date_of_issue.
+   - If a CNIC / National ID is present on the certificate, also populate "cnic" with it (XXXXX-XXXXXXX-X).
 3. Other documents:
-   - CNIC / National Identity Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date)
+   - CNIC / National Identity Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date): populate BOTH "document_number" and "cnic" with the 13-digit number.
    - Medical Fitness Certificate / GAMCA (with report/slip number, test date, expiry date)
    - Driving License (with license number, issue date, expiry date)
    - Trade Skill Certificate / Educational Certificate (with certificate/roll number, issue date)
@@ -121,6 +123,7 @@ Extract all visible details and return ONLY a valid JSON object with this exact 
   "issuing_country": string or null (Full official country title, e.g. "Pakistan" or "United Kingdom"),
   "country_code": string or null (3-letter ISO code, e.g. "PAK", "GBR"),
   "document_number": string or null (The main number: passport number, CNIC identity number, certificate reference number, or license number),
+  "cnic": string or null (13-digit Pakistani National ID / CNIC formatted as 00000-0000000-0),
   "surname": string or null (Last name / father name if applicable),
   "given_names": string or null (First & middle names),
   "nationality": string or null (e.g. "Pakistani"),
@@ -262,10 +265,23 @@ PROMPT;
             $title = trim("{$type} - {$names}");
         }
 
+        // Extract and format CNIC / National ID
+        $cnic = $this->formatCnicSafe($extractedJson['cnic'] ?? null);
+        if (!$cnic && !empty($extractedJson['document_number'])) {
+            $cnic = $this->formatCnicSafe($extractedJson['document_number']);
+        }
+        if (!$cnic) {
+            $jsonStr = json_encode($extractedJson);
+            if (preg_match('/\b([1-8]\d{4}[-\s]?\d{7}[-\s]?\d)\b/', $jsonStr, $m)) {
+                $cnic = $this->formatCnicSafe($m[1]);
+            }
+        }
+
         $formattedData = [
             'document_type' => $extractedJson['document_type'] ?? 'Passport',
             'title' => $title,
             'document_number' => $extractedJson['document_number'] ?? $extractedJson['passport_number'] ?? null,
+            'cnic' => $cnic,
             'surname' => $extractedJson['surname'] ?? null,
             'given_names' => $extractedJson['given_names'] ?? null,
             'nationality' => $extractedJson['nationality'] ?? $extractedJson['country_code'] ?? null,
@@ -291,6 +307,27 @@ PROMPT;
             'method_label' => 'Google Gemini Vision API',
             'data' => $formattedData,
         ]);
+    }
+
+    /**
+     * Safely format Pakistani CNIC / National ID into 00000-0000000-0.
+     */
+    protected function formatCnicSafe(?string $cnicStr): ?string
+    {
+        if (!$cnicStr) {
+            return null;
+        }
+
+        $digits = preg_replace('/\D/', '', $cnicStr);
+        if (strlen($digits) === 13) {
+            return substr($digits, 0, 5) . '-' . substr($digits, 5, 7) . '-' . substr($digits, 12, 1);
+        }
+
+        if (preg_match('/^\d{5}-\d{7}-\d$/', trim($cnicStr))) {
+            return trim($cnicStr);
+        }
+
+        return null;
     }
 
     /**

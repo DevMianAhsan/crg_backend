@@ -37,18 +37,62 @@ class CandidateController extends Controller
 
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search): void {
+                $cleanDigits = preg_replace('/\D/', '', $search);
                 $q->where('first_name', 'ilike', "%{$search}%")
                     ->orWhere('last_name', 'ilike', "%{$search}%")
                     ->orWhere('passport_number', 'ilike', "%{$search}%")
                     ->orWhere('cnic_number', 'ilike', "%{$search}%")
                     ->orWhere('code', 'ilike', "%{$search}%")
                     ->orWhere('trade', 'ilike', "%{$search}%");
+
+                if (strlen($cleanDigits) >= 4) {
+                    $q->orWhereRaw("REPLACE(REPLACE(COALESCE(cnic_number, ''), '-', ''), ' ', '') ILIKE ?", ["%{$cleanDigits}%"]);
+                }
             });
         }
 
         if ($status = $request->query('status')) {
             if ($status === 'active') {
                 $query->whereIn('status', ['available', 'active']);
+                $mandatoryTypes = DocumentType::where('is_mandatory', true)->get();
+                foreach ($mandatoryTypes as $dt) {
+                    $query->whereHas('documents', function ($q) use ($dt): void {
+                        $q->where(function ($sub) use ($dt): void {
+                            $sub->where('document_type_id', (string) $dt->id)
+                                ->orWhere('document_type_id', $dt->code)
+                                ->orWhere('document_type_name', $dt->name);
+                            if (strcasecmp($dt->code, 'PASSPORT') === 0) {
+                                $sub->orWhere('document_type_id', 'doc-type-1')
+                                    ->orWhere('document_type_name', 'like', '%Passport%');
+                            }
+                        });
+                    });
+                }
+            } elseif ($status === 'processing') {
+                $query->where(function ($q): void {
+                    $q->where('status', 'processing')
+                      ->orWhere(function ($subQ): void {
+                          $subQ->whereIn('status', ['available', 'active']);
+                          $mandatoryTypes = DocumentType::where('is_mandatory', true)->get();
+                          if ($mandatoryTypes->isNotEmpty()) {
+                              $subQ->where(function ($missingQ) use ($mandatoryTypes): void {
+                                  foreach ($mandatoryTypes as $dt) {
+                                      $missingQ->orWhereDoesntHave('documents', function ($q) use ($dt): void {
+                                          $q->where(function ($inner) use ($dt): void {
+                                              $inner->where('document_type_id', (string) $dt->id)
+                                                  ->orWhere('document_type_id', $dt->code)
+                                                  ->orWhere('document_type_name', $dt->name);
+                                              if (strcasecmp($dt->code, 'PASSPORT') === 0) {
+                                                  $inner->orWhere('document_type_id', 'doc-type-1')
+                                                      ->orWhere('document_type_name', 'like', '%Passport%');
+                                              }
+                                          });
+                                      });
+                                  }
+                              });
+                          }
+                      });
+                });
             } else {
                 $query->where('status', $status);
             }
@@ -78,25 +122,33 @@ class CandidateController extends Controller
             }
         }
 
-        $rawCounts = (clone $countsQuery)
-            ->select('status', DB::raw('count(*) as count'))
-            ->groupBy('status')
-            ->pluck('count', 'status')
-            ->toArray();
+        $allScoped = (clone $countsQuery)->with('documents')->get();
+        $totalCount = $allScoped->count();
+        $placedCount = $allScoped->where('status', 'placed')->count();
+        $withdrawnCount = $allScoped->where('status', 'withdrawn')->count();
 
-        $totalCount = (clone $countsQuery)->count();
-        $availableCount = ($rawCounts['available'] ?? 0) + ($rawCounts['active'] ?? 0);
+        $activeCount = 0;
+        $processingCount = 0;
+        foreach ($allScoped as $cand) {
+            if ($cand->status === 'placed' || $cand->status === 'withdrawn') {
+                continue;
+            }
+            if ($this->candidateHasAllMandatoryDocuments($cand)) {
+                $activeCount++;
+            } else {
+                $processingCount++;
+            }
+        }
 
         return response()->json([
             'candidates' => $candidates->map(fn (Candidate $c): array => $this->presentList($c))->values(),
             'counts' => [
                 'all' => $totalCount,
-                'active' => $availableCount,
-                'available' => $availableCount,
-                'processing' => $rawCounts['processing'] ?? 0,
-                'placed' => $rawCounts['placed'] ?? 0,
-                'on_hold' => $rawCounts['on_hold'] ?? 0,
-                'withdrawn' => $rawCounts['withdrawn'] ?? 0,
+                'active' => $activeCount,
+                'available' => $activeCount,
+                'processing' => $processingCount,
+                'placed' => $placedCount,
+                'withdrawn' => $withdrawnCount,
             ],
         ]);
     }
@@ -179,10 +231,8 @@ class CandidateController extends Controller
             ], 422);
         }
 
-        // Generate sequential code
-        $count       = Candidate::withTrashed()->count();
-        $code        = 'CRG-' . str_pad((string) ($count + 1001), 4, '0', STR_PAD_LEFT);
-        $psnCode     = 'PSN-' . now()->year . '-' . str_pad((string) ($count + 1), 4, '0', STR_PAD_LEFT);
+        // Generate guaranteed unique sequential codes
+        [$code, $psnCode] = $this->generateUniqueCandidateCodes();
 
         // Handle photo upload
         $photoPath = null;
@@ -210,16 +260,16 @@ class CandidateController extends Controller
             'passport_expiry'    => $data['passportExpiry'] ?? null,
             'passport_issue_date'=> $data['passportIssueDate'] ?? null,
             'cnic_number'        => $data['cnicNumber'] ?? null,
-            'nationality'        => $data['nationality'] ?? 'Pakistani',
-            'current_location'   => $data['currentLocation'] ?? 'Pakistan',
+            'nationality'        => !empty($data['nationality']) ? $data['nationality'] : null,
+            'current_location'   => !empty($data['currentLocation']) ? $data['currentLocation'] : null,
             'target_country'     => $data['targetCountry'] ?? null,
             'assigned_recruiter' => $data['assignedRecruiter'] ?? null,
             'trade'              => $data['trade'],
             'experience_years'   => $data['experienceYears'] ?? 0,
-            'expected_salary'    => $data['expectedSalary'] ?? 0,
-            'currency'           => $data['currency'] ?? 'AED',
+            'expected_salary'    => !empty($data['expectedSalary']) ? $data['expectedSalary'] : null,
+            'currency'           => !empty($data['currency']) ? $data['currency'] : null,
             'photo_path'         => $photoPath,
-            'status'             => 'available',
+            'status'             => 'processing',
             'recruitment_stage'  => 'registered',
             'skills'             => $skills ?? [],
             'balance'            => $data['balance'] ?? 0,
@@ -244,10 +294,11 @@ class CandidateController extends Controller
             'qualification'      => $data['qualification'] ?? null,
         ]);
 
+        $this->syncCandidateStatus($candidate);
         $candidate->load(['company', 'documents', 'submissions', 'withdrawal']);
 
         return response()->json([
-            'candidate' => $this->presentDetail($candidate),
+            'candidate' => $this->presentDetail($candidate->fresh()),
         ], 201);
     }
 
@@ -546,28 +597,50 @@ class CandidateController extends Controller
 
         DB::beginTransaction();
         try {
-            $maxId = (int) (Candidate::withTrashed()->max('id') ?? 0);
-            $totalCount = (int) Candidate::withTrashed()->count();
-
-            // Find highest existing numeric code if any
-            $maxExistingCodeNum = 0;
-            $latestCandidateWithCode = Candidate::withTrashed()
-                ->where('code', 'LIKE', 'CRG-%')
-                ->orderByDesc('id')
-                ->first(['code']);
-            if ($latestCandidateWithCode && preg_match('/CRG-(\d+)/', $latestCandidateWithCode->code, $m)) {
-                $maxExistingCodeNum = (int) $m[1];
+            // Find highest existing numeric code across all existing candidates
+            $maxExistingCodeNum = 1000;
+            $allCodes = Candidate::withTrashed()->pluck('code')->all();
+            foreach ($allCodes as $c) {
+                if ($c && preg_match('/CRG-(\d+)/i', $c, $m)) {
+                    $num = (int) $m[1];
+                    if ($num > $maxExistingCodeNum) {
+                        $maxExistingCodeNum = $num;
+                    }
+                }
             }
 
-            $counter = max($maxExistingCodeNum - 1000, $maxId, $totalCount) + 1;
             $currentYear = now()->year;
+            $maxPsn = 0;
+            $allPsn = Candidate::withTrashed()
+                ->where('psn_code', 'LIKE', "PSN-{$currentYear}-%")
+                ->pluck('psn_code')
+                ->all();
+            foreach ($allPsn as $p) {
+                if ($p && preg_match('/PSN-\d+-(\d+)/i', $p, $m)) {
+                    $pNum = (int) $m[1];
+                    if ($pNum > $maxPsn) {
+                        $maxPsn = $pNum;
+                    }
+                }
+            }
+
+            $counter = $maxExistingCodeNum + 1;
+            $psnCounter = $maxPsn + 1;
 
             foreach ($validCandidatesToInsert as $item) {
                 $cData = $item['data'];
 
-                $code    = 'CRG-' . str_pad((string) ($counter + 1000), 4, '0', STR_PAD_LEFT);
-                $psnCode = 'PSN-' . $currentYear . '-' . str_pad((string) $counter, 4, '0', STR_PAD_LEFT);
+                while (Candidate::withTrashed()->where('code', 'CRG-' . str_pad((string) $counter, 4, '0', STR_PAD_LEFT))->exists()) {
+                    $counter++;
+                }
+                $code = 'CRG-' . str_pad((string) $counter, 4, '0', STR_PAD_LEFT);
                 $counter++;
+
+                while (Candidate::withTrashed()->where('psn_code', 'PSN-' . $currentYear . '-' . str_pad((string) $psnCounter, 4, '0', STR_PAD_LEFT))->exists()) {
+                    $psnCounter++;
+                }
+                $psnCode = 'PSN-' . $currentYear . '-' . str_pad((string) $psnCounter, 4, '0', STR_PAD_LEFT);
+                $psnCounter++;
 
                 $skills = $cData['skills'];
                 if (is_string($skills)) {
@@ -595,7 +668,7 @@ class CandidateController extends Controller
                     'experience_years'    => (int) ($cData['experienceYears'] ?? 0),
                     'expected_salary'     => (float) ($cData['expectedSalary'] ?? 0),
                     'currency'            => $cData['currency'] ?: null,
-                    'status'              => $cData['status'] ?: 'available',
+                    'status'              => in_array($cData['status'] ?? '', ['placed', 'withdrawn'], true) ? $cData['status'] : 'processing',
                     'recruitment_stage'   => 'registered',
                     'skills'              => $skills,
                     'balance'             => (float) ($cData['balance'] ?? 0),
@@ -613,7 +686,8 @@ class CandidateController extends Controller
                     'joined_date'         => $cData['joinedDate'] ?: null,
                 ]);
 
-                $insertedCandidates[] = $this->presentList($newCandidate);
+                $this->syncCandidateStatus($newCandidate);
+                $insertedCandidates[] = $this->presentList($newCandidate->fresh());
             }
 
             DB::commit();
@@ -805,9 +879,9 @@ class CandidateController extends Controller
 
         $joinedDate = $this->formatCandidateDate($row['joinedDate'] ?? $row['fileReceivingDate'] ?? null);
 
-        $statusRaw = strtolower(trim((string) ($row['status'] ?? 'available')));
-        $validStatuses = ['available', 'placed', 'processing', 'on_hold', 'withdrawn', 'archived'];
-        $status = in_array($statusRaw, $validStatuses, true) ? $statusRaw : 'available';
+        $statusRaw = strtolower(trim((string) ($row['status'] ?? 'processing')));
+        $validStatuses = ['available', 'placed', 'processing', 'active', 'withdrawn', 'archived'];
+        $status = in_array($statusRaw, $validStatuses, true) ? $statusRaw : 'processing';
 
         return [
             'firstName'          => $firstName,
@@ -1003,8 +1077,8 @@ class CandidateController extends Controller
             'assigned_recruiter' => $data['assignedRecruiter'] ?? null,
             'trade'              => $tradeValue,
             'experience_years'   => $data['experienceYears'] ?? 0,
-            'expected_salary'    => $data['expectedSalary'] ?? 0,
-            'currency'           => $data['currency'] ?? 'AED',
+            'expected_salary'    => array_key_exists('expectedSalary', $data) ? (!empty($data['expectedSalary']) ? $data['expectedSalary'] : null) : $candidate->expected_salary,
+            'currency'           => array_key_exists('currency', $data) ? (!empty($data['currency']) ? $data['currency'] : null) : $candidate->currency,
             'balance'            => array_key_exists('balance', $data) ? ($data['balance'] ?? 0) : $candidate->balance,
             'skills'             => $skills ?? $candidate->skills,
             'photo_path'         => $photoPath,
@@ -1426,13 +1500,14 @@ class CandidateController extends Controller
     {
         $this->requirePermission($request, 'candidates.update');
         $candidate->update([
-            'status'             => 'available',
+            'status'             => 'processing',
             'current_company_id' => null,
         ]);
+        $this->syncCandidateStatus($candidate);
 
         return response()->json([
             'candidate' => $this->presentDetail($candidate->fresh()->load(['company', 'documents', 'submissions', 'withdrawal'])),
-            'message'   => 'Candidate returned to the available pool.',
+            'message'   => 'Candidate returned to the pool.',
         ]);
     }
 
@@ -1494,12 +1569,13 @@ class CandidateController extends Controller
         // Delete candidate withdrawal record if any
         $candidate->withdrawal()?->delete();
 
-        // Restore candidate status to available
-        $candidate->update(['status' => 'available']);
+        // Restore candidate status with mandatory docs check
+        $candidate->update(['status' => 'processing']);
+        $this->syncCandidateStatus($candidate);
 
         return response()->json([
             'candidate' => $this->presentDetail($candidate->fresh()->load(['company', 'documents', 'submissions', 'withdrawal'])),
-            'message'   => 'Candidate re-enabled successfully and set to Available.',
+            'message'   => 'Candidate re-enabled successfully.',
         ]);
     }
 
@@ -1570,6 +1646,8 @@ class CandidateController extends Controller
         if (in_array($candidate->recruitment_stage, ['inquiry', 'registered'])) {
             $candidate->update(['recruitment_stage' => 'docs_collection']);
         }
+
+        $this->syncCandidateStatus($candidate);
 
         return response()->json([
             'document' => $this->presentDocument($document),
@@ -1673,6 +1751,7 @@ class CandidateController extends Controller
         }
 
         $document->delete();
+        $this->syncCandidateStatus($candidate);
 
         return response()->json(['message' => 'Document deleted.']);
     }
@@ -1734,7 +1813,7 @@ class CandidateController extends Controller
             'issueDate'      => $candidate->passport_issue_date?->toDateString(),
             'expiryDate'     => $candidate->passport_expiry?->toDateString(),
             'documentId'     => $oldDoc ? (string) $oldDoc->id : null,
-            'documentUrl'    => $oldDoc ? $oldDoc->file_url : null,
+            'documentUrl'    => $oldDoc && $oldDoc->file_url ? url($oldDoc->file_url) : null,
             'archivedAt'     => now()->toDateTimeString(),
             'notes'          => $data['notes'] ?? 'Renewed upon expiry / reissue',
         ];
@@ -1780,6 +1859,7 @@ class CandidateController extends Controller
             'passport_history'    => $currentHistory,
         ]);
 
+        $this->syncCandidateStatus($candidate);
         $candidate->load(['company', 'documents', 'submissions.company', 'withdrawal']);
 
         return response()->json([
@@ -1908,8 +1988,8 @@ class CandidateController extends Controller
             'documentTypeId'   => $doc->document_type_id,
             'documentTypeName' => $doc->document_type_name,
             'documentNumber'   => $doc->document_number ?? '',
-            'fileUrl'          => $doc->file_url ?? '#',
-            'filePreviewUrl'   => $doc->file_url,
+            'fileUrl'          => $doc->file_url ? url($doc->file_url) : '#',
+            'filePreviewUrl'   => $doc->file_url ? url($doc->file_url) : null,
             'fileName'         => $doc->file_name ?? '',
             'fileSize'         => $doc->file_size ?? '',
             'issueDate'        => $doc->issue_date?->toDateString() ?? '',
@@ -1961,5 +2041,141 @@ class CandidateController extends Controller
         }
 
         return round($bytes / 1024) . ' KB';
+    }
+
+    public function syncCandidateStatus(Candidate $candidate): void
+    {
+        if (in_array($candidate->status, ['placed', 'withdrawn'], true)) {
+            return;
+        }
+
+        $candidate->loadMissing('documents');
+        $hasAllMandatory = $this->candidateHasAllMandatoryDocuments($candidate);
+
+        $newStatus = $hasAllMandatory ? 'active' : 'processing';
+        if ($candidate->status !== $newStatus) {
+            $candidate->update(['status' => $newStatus]);
+        }
+    }
+
+    public function candidateHasAllMandatoryDocuments(Candidate $candidate): bool
+    {
+        $mandatoryDocTypes = DocumentType::where('is_mandatory', true)->get();
+        if ($mandatoryDocTypes->isEmpty()) {
+            return true;
+        }
+
+        $docs = $candidate->documents;
+        if ($docs->isEmpty()) {
+            return false;
+        }
+
+        foreach ($mandatoryDocTypes as $dt) {
+            $matched = $docs->contains(function (CandidateDocument $doc) use ($dt): bool {
+                $hasFile = !empty($doc->file_path) || !empty($doc->file_name);
+                if (!$hasFile) {
+                    return false;
+                }
+
+                $dtId = (string) $dt->id;
+                $dtCode = strtolower(trim((string) $dt->code));
+                $dtName = strtolower(trim((string) $dt->name));
+
+                $docTypeId = trim((string) $doc->document_type_id);
+                $docTypeIdLower = strtolower($docTypeId);
+                $docTypeName = strtolower(trim((string) $doc->document_type_name));
+                $docTitle = strtolower(trim((string) $doc->title));
+
+                if ($docTypeId === $dtId) return true;
+                if ($dtCode && $docTypeIdLower === $dtCode) return true;
+                if ($dtName && ($docTypeName === $dtName || $docTitle === $dtName)) return true;
+
+                // Aliases
+                if ($dtCode === 'passport' || str_contains($dtName, 'passport')) {
+                    if ($docTypeIdLower === 'doc-type-1' || $docTypeIdLower === 'passport' || str_contains($docTypeName, 'passport') || str_contains($docTitle, 'passport')) {
+                        return true;
+                    }
+                }
+                if ($dtCode === 'cnic' || str_contains($dtName, 'cnic') || str_contains($dtName, 'identity')) {
+                    if ($docTypeIdLower === 'cnic' || str_contains($docTypeName, 'cnic') || str_contains($docTypeName, 'identity') || str_contains($docTitle, 'cnic')) {
+                        return true;
+                    }
+                }
+                if ($dtCode === 'police_clearance' || str_contains($dtName, 'police') || str_contains($dtName, 'character')) {
+                    if ($docTypeIdLower === 'police_clearance' || str_contains($docTypeName, 'police') || str_contains($docTypeName, 'character') || str_contains($docTitle, 'police') || str_contains($docTitle, 'character')) {
+                        return true;
+                    }
+                }
+                if ($dtCode === 'medical_fitness' || str_contains($dtName, 'medical')) {
+                    if ($docTypeIdLower === 'medical_fitness' || str_contains($docTypeName, 'medical') || str_contains($docTitle, 'medical')) {
+                        return true;
+                    }
+                }
+                if ($dtCode === 'skill_cert' || str_contains($dtName, 'skill') || str_contains($dtName, 'trade')) {
+                    if ($docTypeIdLower === 'skill_cert' || str_contains($docTypeName, 'skill') || str_contains($docTitle, 'skill')) {
+                        return true;
+                    }
+                }
+                if ($dtCode === 'visa_stamp' || str_contains($dtName, 'visa')) {
+                    if ($docTypeIdLower === 'visa_stamp' || str_contains($docTypeName, 'visa') || str_contains($docTitle, 'visa')) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+
+            if (!$matched) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function generateUniqueCandidateCodes(): array
+    {
+        $maxNum = 1000;
+        $allCodes = Candidate::withTrashed()->pluck('code')->all();
+        foreach ($allCodes as $c) {
+            if ($c && preg_match('/CRG-(\d+)/i', $c, $m)) {
+                $num = (int) $m[1];
+                if ($num > $maxNum) {
+                    $maxNum = $num;
+                }
+            }
+        }
+
+        $nextNum = $maxNum + 1;
+        $code = 'CRG-' . str_pad((string) $nextNum, 4, '0', STR_PAD_LEFT);
+        while (Candidate::withTrashed()->where('code', $code)->exists()) {
+            $nextNum++;
+            $code = 'CRG-' . str_pad((string) $nextNum, 4, '0', STR_PAD_LEFT);
+        }
+
+        $year = now()->year;
+        $maxPsn = 0;
+        $allPsn = Candidate::withTrashed()
+            ->where('psn_code', 'LIKE', "PSN-{$year}-%")
+            ->pluck('psn_code')
+            ->all();
+
+        foreach ($allPsn as $p) {
+            if ($p && preg_match('/PSN-\d+-(\d+)/i', $p, $m)) {
+                $pNum = (int) $m[1];
+                if ($pNum > $maxPsn) {
+                    $maxPsn = $pNum;
+                }
+            }
+        }
+
+        $nextPsn = $maxPsn + 1;
+        $psnCode = 'PSN-' . $year . '-' . str_pad((string) $nextPsn, 4, '0', STR_PAD_LEFT);
+        while (Candidate::withTrashed()->where('psn_code', $psnCode)->exists()) {
+            $nextPsn++;
+            $psnCode = 'PSN-' . $year . '-' . str_pad((string) $nextPsn, 4, '0', STR_PAD_LEFT);
+        }
+
+        return [$code, $psnCode];
     }
 }
