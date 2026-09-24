@@ -2140,6 +2140,139 @@ class CandidateController extends Controller
     }
 
     // --------------------------------------------------------------------------
+    // Candidate Public Agreement View — GET /candidates/agreement/{token}
+    // --------------------------------------------------------------------------
+
+    public function showAgreement(Request $request, string $token): JsonResponse
+    {
+        $candidate = Candidate::where('agreement_token', $token)
+            ->orWhere(function ($q) use ($token) {
+                if (is_numeric($token)) {
+                    $q->where('id', $token);
+                }
+            })
+            ->first();
+
+        if (! $candidate) {
+            return response()->json([
+                'message' => 'Candidate agreement link not found or expired.',
+            ], 404);
+        }
+
+        $candidate->ensureAgreementToken();
+
+        return response()->json([
+            'candidate' => [
+                'id'              => (string) $candidate->id,
+                'code'            => $candidate->code,
+                'psnCode'         => $candidate->psn_code,
+                'firstName'       => $candidate->first_name,
+                'lastName'        => $candidate->last_name,
+                'phone'           => $candidate->phone ?? '',
+                'cnicNumber'      => $candidate->cnic_number ?? '',
+                'passportNumber'  => $candidate->passport_number ?? '',
+                'passportExpiry'  => $candidate->passport_expiry?->toDateString() ?? '',
+                'trade'           => $candidate->trade ?? 'General Worker',
+                'targetCountry'   => $candidate->target_country ?? 'Romania',
+                'currentLocation' => $candidate->current_location ?? '',
+                'nationality'     => $candidate->nationality ?? 'Pakistani',
+                'careOf'          => $candidate->care_of ?? '',
+                'photoUrl'        => $candidate->photo_url,
+                'signatureUrl'    => $candidate->signature_url,
+                'agreementToken'  => $candidate->agreement_token,
+                'termsAgreedAt'   => $candidate->terms_agreed_at?->toIso8601String(),
+                'hasAgreed'       => ! empty($candidate->terms_agreed_at) || ! empty($candidate->signature_path),
+                'createdAt'       => $candidate->created_at?->toIso8601String(),
+            ],
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
+    // Candidate Public Sign Agreement — POST /candidates/agreement/{token}/sign
+    // --------------------------------------------------------------------------
+
+    public function signAgreement(Request $request, string $token): JsonResponse
+    {
+        $candidate = Candidate::where('agreement_token', $token)
+            ->orWhere(function ($q) use ($token) {
+                if (is_numeric($token)) {
+                    $q->where('id', $token);
+                }
+            })
+            ->first();
+
+        if (! $candidate) {
+            return response()->json([
+                'message' => 'Candidate agreement link not found or expired.',
+            ], 404);
+        }
+
+        // Restrict public shareable link to one-time submission only
+        $isFromPortal = $request->boolean('from_portal');
+        if (! $isFromPortal && ($candidate->terms_agreed_at !== null || ! empty($candidate->signature_path))) {
+            return response()->json([
+                'message'           => 'یہ معاہدہ پہلے ہی جمع ہو چکا ہے اور دوبارہ جمع نہیں کیا جا سکتا۔ (This agreement has already been submitted and recorded.)',
+                'already_submitted' => true,
+            ], 400);
+        }
+
+        if (! $request->boolean('agreed')) {
+            return response()->json([
+                'message' => 'You must agree to the terms & refund policy before submitting agreement.',
+            ], 422);
+        }
+
+        $signaturePath = $candidate->signature_path;
+
+        if ($request->hasFile('signature')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
+        } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $base64Image = $request->input('signature');
+            $imageParts = explode(';base64,', $base64Image);
+            if (count($imageParts) === 2) {
+                $imageTypeAux = explode('image/', $imageParts[0]);
+                $imageType = $imageTypeAux[1] ?? 'png';
+                $imageBase64 = base64_decode($imageParts[1]);
+                if ($imageBase64 !== false) {
+                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
+                    Storage::disk('public')->put($fileName, $imageBase64);
+                    $signaturePath = $fileName;
+                }
+            }
+        }
+
+        if (! $signaturePath) {
+            return response()->json([
+                'message' => 'Please provide a valid agreement confirmation before submitting.',
+            ], 422);
+        }
+
+        $candidate->update([
+            'signature_path'  => $signaturePath,
+            'terms_agreed_at' => now(),
+        ]);
+
+        return response()->json([
+            'message'   => 'Candidate agreement submitted successfully.',
+            'candidate' => [
+                'id'             => (string) $candidate->id,
+                'firstName'      => $candidate->first_name,
+                'lastName'       => $candidate->last_name,
+                'signatureUrl'   => $candidate->signature_url,
+                'termsAgreedAt'  => $candidate->terms_agreed_at?->toIso8601String(),
+                'hasAgreed'      => true,
+                'agreementToken' => $candidate->agreement_token,
+            ],
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
     // Return to Pool — PATCH /candidates/{candidate}/return
     // --------------------------------------------------------------------------
 
@@ -2637,6 +2770,8 @@ class CandidateController extends Controller
             'currentCompanyName'  => $candidate->company?->name,
             'photoUrl'            => $candidate->photo_url,
             'signatureUrl'        => $candidate->signature_url,
+            'agreementToken'      => $candidate->agreement_token,
+            'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
             'nationality'         => $candidate->nationality,
             'currentLocation'     => $candidate->current_location,
             'targetCountry'       => $candidate->target_country ?? '',
@@ -2697,6 +2832,8 @@ class CandidateController extends Controller
             'currency'            => $candidate->currency,
             'photoUrl'            => $candidate->photo_url,
             'signatureUrl'        => $candidate->signature_url,
+            'agreementToken'      => $candidate->agreement_token,
+            'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
             'balance'             => (float) $candidate->balance,
             'fatherName'          => $candidate->father_name,
             'motherName'          => $candidate->mother_name,

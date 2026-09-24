@@ -42,6 +42,8 @@ class Candidate extends Model
         'currency',
         'photo_path',
         'signature_path',
+        'agreement_token',
+        'terms_agreed_at',
         'balance',
         'father_name',
         'mother_name',
@@ -71,11 +73,31 @@ class Candidate extends Model
         'passport_issue_date' => 'date',
         'joined_date'         => 'date',
         'date_of_birth'       => 'date',
+        'terms_agreed_at'     => 'datetime',
         'expected_salary'     => 'decimal:2',
         'balance'             => 'decimal:2',
         'experience_years'    => 'integer',
         'age'                 => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (Candidate $candidate): void {
+            if (empty($candidate->agreement_token)) {
+                $candidate->agreement_token = \Illuminate\Support\Str::random(32);
+            }
+        });
+    }
+
+    public function ensureAgreementToken(): string
+    {
+        if (empty($this->agreement_token)) {
+            $this->agreement_token = \Illuminate\Support\Str::random(32);
+            $this->saveQuietly();
+        }
+
+        return $this->agreement_token;
+    }
 
     // --------------------------------------------------------------------------
     // Relationships
