@@ -8,7 +8,9 @@ use App\Models\CandidateShare;
 use App\Models\CandidateSubmission;
 use App\Models\CandidateWithdrawal;
 use App\Models\Company;
+use App\Models\CompanyLog;
 use App\Models\DocumentType;
+use App\Support\Notifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -317,6 +319,15 @@ class CandidateController extends Controller
 
         $this->syncCandidateStatus($candidate);
         $candidate->load(['company', 'documents', 'submissions', 'withdrawal']);
+
+        Notifier::staff(
+            'CANDIDATE_ADDED',
+            'New candidate registered',
+            trim("{$candidate->first_name} {$candidate->last_name}") . " ({$candidate->code}) was added" . ($candidate->trade ? " as {$candidate->trade}." : '.'),
+            ['candidateId' => $candidate->id, 'candidateCode' => $candidate->code],
+            "/dashboard/candidates/{$candidate->id}",
+            $request
+        );
 
         return response()->json([
             'candidate' => $this->presentDetail($candidate->fresh()),
@@ -1583,6 +1594,82 @@ class CandidateController extends Controller
         ]);
     }
 
+    /**
+     * PATCH /candidates/{candidate}/fields — updates only the fields sent (used to
+     * fill in details a document template needs). Unlike update(), fields that
+     * aren't in the request are left untouched.
+     */
+    public function updateFields(Request $request, Candidate $candidate): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.update');
+
+        $rules = [
+            'firstName'         => ['sometimes', 'required', 'string', 'max:100'],
+            'lastName'          => ['sometimes', 'nullable', 'string', 'max:100'],
+            'email'             => ['sometimes', 'nullable', 'email', 'max:255'],
+            'phone'             => ['sometimes', 'nullable', 'string', 'max:50'],
+            'passportExpiry'    => ['sometimes', 'nullable', 'date'],
+            'passportIssueDate' => ['sometimes', 'nullable', 'date'],
+            'passportSeries'    => ['sometimes', 'nullable', 'string', 'max:50'],
+            'passportIssuedBy'  => ['sometimes', 'nullable', 'string', 'max:150'],
+            'cnicNumber'        => ['sometimes', 'nullable', 'string', 'max:20'],
+            'nationality'       => ['sometimes', 'nullable', 'string', 'max:100'],
+            'citizenship'       => ['sometimes', 'nullable', 'string', 'max:100'],
+            'currentLocation'   => ['sometimes', 'nullable', 'string', 'max:200'],
+            'town'              => ['sometimes', 'nullable', 'string', 'max:150'],
+            'country'           => ['sometimes', 'nullable', 'string', 'max:100'],
+            'targetCountry'     => ['sometimes', 'nullable', 'string', 'max:200'],
+            'assignedRecruiter' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'trade'             => ['sometimes', 'nullable', 'string', 'max:255'],
+            'occupationField'   => ['sometimes', 'nullable', 'string', 'max:255'],
+            'experienceYears'   => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'currentJob'        => ['sometimes', 'nullable', 'string', 'max:150'],
+            'qualification'     => ['sometimes', 'nullable', 'string', 'max:150'],
+            'expectedSalary'    => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'currency'          => ['sometimes', 'nullable', 'string', 'max:10'],
+            'fatherName'        => ['sometimes', 'nullable', 'string', 'max:150'],
+            'motherName'        => ['sometimes', 'nullable', 'string', 'max:150'],
+            'careOf'            => ['sometimes', 'nullable', 'string', 'max:150'],
+            'dateOfBirth'       => ['sometimes', 'nullable', 'date'],
+            'age'               => ['sometimes', 'nullable', 'integer', 'min:0', 'max:150'],
+            'placeOfBirth'      => ['sometimes', 'nullable', 'string', 'max:150'],
+            'civilStatus'       => ['sometimes', 'nullable', 'string', 'max:50'],
+            'childrenCount'     => ['sometimes', 'nullable', 'string', 'max:20'],
+            'license'           => ['sometimes', 'nullable', 'string', 'max:150'],
+            'formerName'        => ['sometimes', 'nullable', 'string', 'max:150'],
+        ];
+        $data = $request->validate($rules);
+
+        $columns = [
+            'firstName' => 'first_name', 'lastName' => 'last_name', 'email' => 'email', 'phone' => 'phone',
+            'passportExpiry' => 'passport_expiry', 'passportIssueDate' => 'passport_issue_date',
+            'passportSeries' => 'passport_series', 'passportIssuedBy' => 'passport_issued_by',
+            'cnicNumber' => 'cnic_number', 'nationality' => 'nationality', 'citizenship' => 'citizenship',
+            'currentLocation' => 'current_location', 'town' => 'town', 'country' => 'country',
+            'targetCountry' => 'target_country', 'assignedRecruiter' => 'assigned_recruiter', 'trade' => 'trade',
+            'occupationField' => 'occupation_field', 'experienceYears' => 'experience_years',
+            'currentJob' => 'current_job', 'qualification' => 'qualification', 'expectedSalary' => 'expected_salary',
+            'currency' => 'currency', 'fatherName' => 'father_name', 'motherName' => 'mother_name',
+            'careOf' => 'care_of', 'dateOfBirth' => 'date_of_birth', 'age' => 'age',
+            'placeOfBirth' => 'place_of_birth', 'civilStatus' => 'civil_status',
+            'childrenCount' => 'children_count', 'license' => 'license', 'formerName' => 'former_name',
+        ];
+
+        $updates = [];
+        foreach ($data as $key => $value) {
+            $updates[$columns[$key]] = is_string($value) ? trim($value) : $value;
+        }
+        if ($updates) {
+            $candidate->forceFill($updates)->saveOrFail();
+        }
+
+        $saved = Candidate::with(['company', 'documents', 'submissions', 'withdrawal'])->findOrFail($candidate->id);
+
+        return response()->json([
+            'candidate' => $this->presentDetail($saved),
+        ]);
+    }
+
     public function saveCv(Request $request, Candidate $candidate): JsonResponse
     {
         $this->requirePermission($request, 'candidates.update');
@@ -1802,6 +1889,13 @@ class CandidateController extends Controller
 
         $candidates = Candidate::whereIn('id', $data['candidateIds'])->get();
 
+        // Only candidates never shifted to this company before add to its shared total
+        $previouslyShared = CandidateSubmission::where('company_id', $company->id)
+            ->whereIn('candidate_id', $candidates->pluck('id'))
+            ->pluck('candidate_id')
+            ->unique();
+        $newlyShared = $candidates->pluck('id')->diff($previouslyShared)->count();
+
         foreach ($candidates as $candidate) {
             $candidate->update([
                 'status'             => 'placed',
@@ -1829,6 +1923,36 @@ class CandidateController extends Controller
             'candidate_ids' => $candidates->pluck('id')->values()->toArray(),
             'created_by'    => $shiftedBy,
         ]);
+
+        if ($newlyShared > 0) {
+            $company->increment('shared_candidates_count', $newlyShared);
+        }
+
+        $names = $candidates->map(fn (Candidate $c) => trim($c->first_name . ' ' . $c->last_name))->values();
+        CompanyLog::record(
+            $company->id,
+            'candidates_shifted',
+            $candidates->count() === 1
+                ? "Shifted {$names->first()} to the company"
+                : 'Shifted ' . $candidates->count() . ' candidates to the company',
+            [
+                'candidateIds'   => $candidates->pluck('id')->values(),
+                'candidateNames' => $names,
+                'note'           => $data['note'] ?? null,
+            ],
+            $request
+        );
+
+        Notifier::staff(
+            'CANDIDATES_SHIFTED',
+            "Candidates shifted to {$company->name}",
+            $candidates->count() === 1
+                ? "{$names->first()} was shifted to {$company->name}."
+                : $candidates->count() . " candidates were shifted to {$company->name}.",
+            ['companyId' => $company->id, 'count' => $candidates->count()],
+            "/dashboard/companies/{$company->id}",
+            $request
+        );
 
         $frontendUrl  = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
         $shareableUrl = $frontendUrl . '/share/' . $sharedToken;
@@ -2146,6 +2270,7 @@ class CandidateController extends Controller
     public function returnToPool(Request $request, Candidate $candidate): JsonResponse
     {
         $this->requirePermission($request, 'candidates.update');
+        $this->logRejection($candidate, $request);
         $candidate->update([
             'status'             => 'processing',
             'current_company_id' => null,
@@ -2184,6 +2309,7 @@ class CandidateController extends Controller
         DB::beginTransaction();
         try {
             foreach ($candidates as $candidate) {
+                $this->logRejection($candidate, $request);
                 $candidate->update([
                     'status'             => 'processing',
                     'current_company_id' => null,
@@ -2203,6 +2329,33 @@ class CandidateController extends Controller
             'count'   => $updatedCount,
             'message' => "Successfully removed {$updatedCount} candidate(s) from company.",
         ]);
+    }
+
+    /** Logs "rejected - moved to active" on the company the candidate is leaving. */
+    private function logRejection(Candidate $candidate, Request $request): void
+    {
+        if (! $candidate->current_company_id) {
+            return;
+        }
+
+        $name = trim($candidate->first_name . ' ' . $candidate->last_name);
+        CompanyLog::record(
+            (int) $candidate->current_company_id,
+            'candidate_rejected',
+            "{$name} rejected and moved back to Active",
+            ['candidateId' => $candidate->id, 'candidateName' => $name, 'candidateCode' => $candidate->code ?? null],
+            $request
+        );
+
+        $companyName = Company::find($candidate->current_company_id)?->name ?? 'the company';
+        Notifier::staff(
+            'CANDIDATE_REJECTED',
+            'Candidate rejected',
+            "{$name} ({$candidate->code}) was rejected by {$companyName} and moved back to Active.",
+            ['candidateId' => $candidate->id, 'candidateCode' => $candidate->code, 'companyId' => $candidate->current_company_id],
+            "/dashboard/candidates/{$candidate->id}",
+            $request
+        );
     }
 
     // --------------------------------------------------------------------------
@@ -2245,6 +2398,16 @@ class CandidateController extends Controller
         ]);
 
         $candidate->update(['status' => 'withdrawn']);
+
+        $name = trim("{$candidate->first_name} {$candidate->last_name}");
+        Notifier::staff(
+            'CANDIDATE_WITHDRAWN',
+            'Candidate withdrawn',
+            "{$name} ({$candidate->code}) withdrew" . (!empty($data['reason']) ? ": {$data['reason']}" : '.'),
+            ['candidateId' => $candidate->id, 'candidateCode' => $candidate->code, 'reason' => $data['reason'] ?? null],
+            "/dashboard/candidates/{$candidate->id}",
+            $request
+        );
 
         return response()->json([
             'candidate' => $this->presentDetail($candidate->fresh()->load(['company', 'documents', 'submissions', 'withdrawal'])),
@@ -2735,6 +2898,8 @@ class CandidateController extends Controller
             'filePreviewUrl'   => $doc->file_url ? url($doc->file_url) : null,
             'fileName'         => $doc->file_name ?? '',
             'fileSize'         => $doc->file_size ?? '',
+            // True when the record exists but its file isn't on this server's disk
+            'fileMissing'      => !$doc->file_path || !Storage::disk('public')->exists($doc->file_path),
             'issueDate'        => $doc->issue_date?->toDateString() ?? '',
             'expiryDate'       => $doc->expiry_date?->toDateString() ?? '',
             'status'           => $doc->status,

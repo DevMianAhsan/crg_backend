@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Local DB dumps / archives (contain personal data)
+*.sql
+rcg.zip
