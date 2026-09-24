@@ -15,5 +15,14 @@ class Company extends Model
         'country',
         'city',
         'status',
+        'permit_issued',
+        'rejected',
+        'permit_phases',
+    ];
+
+    protected $casts = [
+        'permit_issued' => 'integer',
+        'rejected' => 'integer',
+        'permit_phases' => 'array',
     ];
 }

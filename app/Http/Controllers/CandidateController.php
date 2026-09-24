@@ -193,6 +193,7 @@ class CandidateController extends Controller
             'currency'         => ['nullable', 'string', 'max:10'],
             'balance'          => ['nullable', 'numeric', 'min:0'],
             'photo'            => ['nullable', 'image', 'max:5120'], // 5 MB max
+            'signature'        => ['nullable'],
             'fatherName'       => ['nullable', 'string', 'max:150'],
             'motherName'       => ['nullable', 'string', 'max:150'],
             'placeOfBirth'     => ['nullable', 'string', 'max:150'],
@@ -240,6 +241,25 @@ class CandidateController extends Controller
             $photoPath = $request->file('photo')->store('candidates/photos', 'public');
         }
 
+        // Handle signature upload (file or base64)
+        $signaturePath = null;
+        if ($request->hasFile('signature')) {
+            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
+        } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
+            $base64Image = $request->input('signature');
+            $imageParts = explode(';base64,', $base64Image);
+            if (count($imageParts) === 2) {
+                $imageTypeAux = explode('image/', $imageParts[0]);
+                $imageType = $imageTypeAux[1] ?? 'png';
+                $imageBase64 = base64_decode($imageParts[1]);
+                if ($imageBase64 !== false) {
+                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
+                    Storage::disk('public')->put($fileName, $imageBase64);
+                    $signaturePath = $fileName;
+                }
+            }
+        }
+
         $skills = $request->input('skills');
         if (is_string($skills)) {
             $decoded = json_decode($skills, true);
@@ -269,6 +289,7 @@ class CandidateController extends Controller
             'expected_salary'    => !empty($data['expectedSalary']) ? $data['expectedSalary'] : null,
             'currency'           => !empty($data['currency']) ? $data['currency'] : null,
             'photo_path'         => $photoPath,
+            'signature_path'     => $signaturePath,
             'status'             => 'processing',
             'recruitment_stage'  => 'registered',
             'skills'             => $skills ?? [],
@@ -435,6 +456,426 @@ class CandidateController extends Controller
         }, $filename, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
+    }
+
+    // --------------------------------------------------------------------------
+    // Export Selected Candidates — POST /candidates/export
+    // --------------------------------------------------------------------------
+
+    public function exportExcel(Request $request): StreamedResponse
+    {
+        $this->requirePermission($request, 'candidates.view');
+
+        $format = strtolower($request->input('format', 'xlsx'));
+        $candidateIds = $request->input('candidate_ids', []);
+        $selectedFields = $request->input('fields', []);
+
+        if (is_string($candidateIds)) {
+            $candidateIds = array_values(array_filter(array_map('trim', explode(',', $candidateIds))));
+        }
+
+        $query = Candidate::with(['company', 'documents', 'withdrawal']);
+        if (!empty($candidateIds)) {
+            $query->whereIn('id', $candidateIds);
+        }
+
+        $candidates = $query->orderBy('id', 'asc')->get();
+
+        $fieldDefinitions = $this->getExportFieldDefinitions();
+
+        // If no fields specified, use standard default fields
+        if (empty($selectedFields) || !is_array($selectedFields)) {
+            $selectedFields = [
+                'code',
+                'name',
+                'father_name',
+                'passport_number',
+                'passport_expiry',
+                'cnic_number',
+                'phone',
+                'trade',
+                'experience_years',
+                'company',
+                'status',
+            ];
+        }
+
+        $fieldsToExport = [];
+        foreach ($selectedFields as $f) {
+            $key = $this->normalizeFieldKey((string) $f);
+            if (isset($fieldDefinitions[$key])) {
+                $fieldsToExport[$key] = $fieldDefinitions[$key];
+            }
+        }
+
+        if (empty($fieldsToExport)) {
+            $fieldsToExport = $fieldDefinitions;
+        }
+
+        $headers = array_column(array_values($fieldsToExport), 'label');
+        $timestamp = now()->format('Y-m-d_His');
+
+        if ($format === 'csv') {
+            $filename = "candidates_export_{$timestamp}.csv";
+            return response()->streamDownload(function () use ($headers, $fieldsToExport, $candidates): void {
+                $file = fopen('php://output', 'w');
+                fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+                fputcsv($file, $headers);
+
+                foreach ($candidates as $cand) {
+                    $row = [];
+                    foreach ($fieldsToExport as $fieldDef) {
+                        $resolver = $fieldDef['resolver'];
+                        $row[] = (string) $resolver($cand);
+                    }
+                    fputcsv($file, $row);
+                }
+                fclose($file);
+            }, $filename, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+            ]);
+        }
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Selected Candidates');
+
+        // Headers
+        $colIndex = 1;
+        foreach ($headers as $header) {
+            $sheet->setCellValueExplicit([$colIndex, 1], $header, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $colLetter = Coordinate::stringFromColumnIndex($colIndex);
+            $sheet->getColumnDimension($colLetter)->setAutoSize(true);
+            $colIndex++;
+        }
+
+        $highestCol = Coordinate::stringFromColumnIndex(count($headers));
+        $headerRange = "A1:{$highestCol}1";
+        $sheet->getStyle($headerRange)->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
+        $sheet->getStyle($headerRange)->getFill()->setFillType(Fill::FILL_SOLID)
+            ->getStartColor()->setRGB('1E3A8A');
+        $sheet->getRowDimension(1)->setRowHeight(28);
+
+        // Freeze top header row
+        $sheet->freezePane('A2');
+
+        // Rows
+        $rowNum = 2;
+        foreach ($candidates as $cand) {
+            $colNum = 1;
+            foreach ($fieldsToExport as $fieldDef) {
+                $resolver = $fieldDef['resolver'];
+                $val = (string) $resolver($cand);
+                $sheet->setCellValueExplicit([$colNum, $rowNum], $val, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                $colNum++;
+            }
+
+            // Zebra striping
+            if ($rowNum % 2 === 1) {
+                $rowRange = "A{$rowNum}:{$highestCol}{$rowNum}";
+                $sheet->getStyle($rowRange)->getFill()->setFillType(Fill::FILL_SOLID)
+                    ->getStartColor()->setRGB('F8FAFC');
+            }
+            $sheet->getRowDimension($rowNum)->setRowHeight(22);
+            $rowNum++;
+        }
+
+        $filename = "candidates_export_{$timestamp}.xlsx";
+        $writer = new Xlsx($spreadsheet);
+
+        return response()->streamDownload(function () use ($writer): void {
+            $writer->save('php://output');
+        }, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    private function normalizeFieldKey(string $key): string
+    {
+        $clean = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', trim($key)));
+        $aliases = [
+            'candidate_name'       => 'name',
+            'full_name'            => 'name',
+            'company_name'         => 'company',
+            'current_company_name' => 'company',
+            'current_company'      => 'company',
+            'current_company_id'   => 'company',
+            'passport_no'          => 'passport_number',
+            'passport'             => 'passport_number',
+            'contact'              => 'phone',
+            'contact_no'           => 'phone',
+            'rate'                 => 'expected_salary',
+            'salary'               => 'expected_salary',
+            'exp'                  => 'experience_years',
+            'experience'           => 'experience_years',
+            'martial_status'       => 'civil_status',
+            'marital_status'       => 'civil_status',
+            'kids'                 => 'children_count',
+            'file_receiving_date'  => 'joined_date',
+        ];
+
+        return $aliases[$clean] ?? $clean;
+    }
+
+    private function getExportFieldDefinitions(): array
+    {
+        return [
+            // Basic & Identification
+            'code' => [
+                'label'    => 'Candidate Code',
+                'category' => 'Basic & Identification',
+                'resolver' => fn ($c) => $c->code ?? '',
+            ],
+            'psn_code' => [
+                'label'    => 'PSN Code',
+                'category' => 'Basic & Identification',
+                'resolver' => fn ($c) => $c->psn_code ?? '',
+            ],
+            'status' => [
+                'label'    => 'Status',
+                'category' => 'Basic & Identification',
+                'resolver' => fn ($c) => strtoupper($c->status ?? ''),
+            ],
+            'recruitment_stage' => [
+                'label'    => 'Recruitment Stage',
+                'category' => 'Basic & Identification',
+                'resolver' => fn ($c) => ucwords(str_replace('_', ' ', $c->recruitment_stage ?? '')),
+            ],
+            'joined_date' => [
+                'label'    => 'File Receiving / Joined Date',
+                'category' => 'Basic & Identification',
+                'resolver' => fn ($c) => $c->joined_date ? \Carbon\Carbon::parse($c->joined_date)->format('d/m/Y') : '',
+            ],
+
+            // Personal Information
+            'name' => [
+                'label'    => 'Candidate Name (Full)',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => trim(($c->first_name ?? '') . ' ' . ($c->last_name ?? '')),
+            ],
+            'first_name' => [
+                'label'    => 'First Name',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->first_name ?? '',
+            ],
+            'last_name' => [
+                'label'    => 'Last Name',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->last_name ?? '',
+            ],
+            'father_name' => [
+                'label'    => 'Father Name',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->father_name ?? '',
+            ],
+            'mother_name' => [
+                'label'    => 'Mother Name',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->mother_name ?? '',
+            ],
+            'care_of' => [
+                'label'    => 'C/O (Care Of)',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->care_of ?? '',
+            ],
+            'date_of_birth' => [
+                'label'    => 'Date of Birth',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->date_of_birth ? \Carbon\Carbon::parse($c->date_of_birth)->format('d/m/Y') : '',
+            ],
+            'age' => [
+                'label'    => 'Age',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->age ?? '',
+            ],
+            'place_of_birth' => [
+                'label'    => 'Place of Birth',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->place_of_birth ?? '',
+            ],
+            'civil_status' => [
+                'label'    => 'Marital / Civil Status',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => ucfirst($c->civil_status ?? ''),
+            ],
+            'children_count' => [
+                'label'    => 'Children Count',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->children_count ?? '',
+            ],
+            'license' => [
+                'label'    => 'License',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->license ?? '',
+            ],
+            'former_name' => [
+                'label'    => 'Former Name',
+                'category' => 'Personal Information',
+                'resolver' => fn ($c) => $c->former_name ?? '',
+            ],
+
+            // Passport & Identity
+            'passport_number' => [
+                'label'    => 'Passport Number',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->passport_number ?? '',
+            ],
+            'passport_expiry' => [
+                'label'    => 'Passport Expiry Date',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->passport_expiry ? \Carbon\Carbon::parse($c->passport_expiry)->format('d/m/Y') : '',
+            ],
+            'passport_issue_date' => [
+                'label'    => 'Passport Issue Date',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->passport_issue_date ? \Carbon\Carbon::parse($c->passport_issue_date)->format('d/m/Y') : '',
+            ],
+            'passport_series' => [
+                'label'    => 'Passport Series',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->passport_series ?? '',
+            ],
+            'passport_issued_by' => [
+                'label'    => 'Passport Issued By',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->passport_issued_by ?? '',
+            ],
+            'cnic_number' => [
+                'label'    => 'CNIC / Identity Number',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->cnic_number ?? '',
+            ],
+            'nationality' => [
+                'label'    => 'Nationality',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->nationality ?? '',
+            ],
+            'citizenship' => [
+                'label'    => 'Citizenship',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->citizenship ?? '',
+            ],
+
+            // Contact & Location
+            'phone' => [
+                'label'    => 'Phone / Contact Number',
+                'category' => 'Contact & Location',
+                'resolver' => fn ($c) => $c->phone ?? '',
+            ],
+            'email' => [
+                'label'    => 'Email Address',
+                'category' => 'Contact & Location',
+                'resolver' => fn ($c) => $c->email ?? '',
+            ],
+            'current_location' => [
+                'label'    => 'Current Location / Address',
+                'category' => 'Contact & Location',
+                'resolver' => fn ($c) => $c->current_location ?? '',
+            ],
+            'town' => [
+                'label'    => 'Town / City',
+                'category' => 'Contact & Location',
+                'resolver' => fn ($c) => $c->town ?? '',
+            ],
+            'country' => [
+                'label'    => 'Country',
+                'category' => 'Contact & Location',
+                'resolver' => fn ($c) => $c->country ?? '',
+            ],
+            'target_country' => [
+                'label'    => 'Target Country',
+                'category' => 'Contact & Location',
+                'resolver' => fn ($c) => $c->target_country ?? '',
+            ],
+
+            // Professional & Experience
+            'trade' => [
+                'label'    => 'Trade / Role',
+                'category' => 'Professional & Experience',
+                'resolver' => fn ($c) => $c->trade ?? '',
+            ],
+            'occupation_field' => [
+                'label'    => 'Occupation Field',
+                'category' => 'Professional & Experience',
+                'resolver' => fn ($c) => $c->occupation_field ?? '',
+            ],
+            'experience_years' => [
+                'label'    => 'Experience (Years)',
+                'category' => 'Professional & Experience',
+                'resolver' => fn ($c) => isset($c->experience_years) ? "{$c->experience_years} yrs" : '0 yrs',
+            ],
+            'current_job' => [
+                'label'    => 'Current Job',
+                'category' => 'Professional & Experience',
+                'resolver' => fn ($c) => $c->current_job ?? '',
+            ],
+            'qualification' => [
+                'label'    => 'Qualification / Education',
+                'category' => 'Professional & Experience',
+                'resolver' => fn ($c) => $c->qualification ?? '',
+            ],
+            'skills' => [
+                'label'    => 'Skills',
+                'category' => 'Professional & Experience',
+                'resolver' => fn ($c) => is_array($c->skills) ? implode(', ', $c->skills) : ($c->skills ?? ''),
+            ],
+            'cv_summary' => [
+                'label'    => 'CV Summary / Profile',
+                'category' => 'Professional & Experience',
+                'resolver' => fn ($c) => $c->cv_summary ?? '',
+            ],
+
+            // Company & Financial
+            'company' => [
+                'label'    => 'Assigned Company',
+                'category' => 'Company & Financial',
+                'resolver' => fn ($c) => $c->company ? $c->company->name : 'Unassigned',
+            ],
+            'assigned_recruiter' => [
+                'label'    => 'Assigned Recruiter',
+                'category' => 'Company & Financial',
+                'resolver' => fn ($c) => $c->assigned_recruiter ?? '',
+            ],
+            'expected_salary' => [
+                'label'    => 'Rate / Expected Salary',
+                'category' => 'Company & Financial',
+                'resolver' => fn ($c) => $c->expected_salary ? number_format((float) $c->expected_salary, 2) : '0.00',
+            ],
+            'currency' => [
+                'label'    => 'Currency',
+                'category' => 'Company & Financial',
+                'resolver' => fn ($c) => $c->currency ?? 'AED',
+            ],
+            'balance' => [
+                'label'    => 'Financial Balance',
+                'category' => 'Company & Financial',
+                'resolver' => fn ($c) => $c->balance ? number_format((float) $c->balance, 2) : '0.00',
+            ],
+
+            // Documents & Compliance
+            'documents_count' => [
+                'label'    => 'Total Uploaded Documents',
+                'category' => 'Documents & Compliance',
+                'resolver' => fn ($c) => (string) ($c->documents ? $c->documents->count() : 0),
+            ],
+            'documents_list' => [
+                'label'    => 'Document Names',
+                'category' => 'Documents & Compliance',
+                'resolver' => fn ($c) => $c->documents ? $c->documents->pluck('title')->filter()->implode(', ') : '',
+            ],
+            'work_permit_status' => [
+                'label'    => 'Work Permit Issued',
+                'category' => 'Documents & Compliance',
+                'resolver' => function ($c) {
+                    if (!$c->documents || $c->documents->isEmpty()) return 'No';
+                    $hasPermit = $c->documents->contains(function ($doc) {
+                        $t = strtolower(($doc->title ?? '') . ' ' . ($doc->document_type_name ?? ''));
+                        return str_contains($t, 'permit');
+                    });
+                    return $hasPermit ? 'Yes' : 'No';
+                },
+            ],
+        ];
     }
 
     // --------------------------------------------------------------------------
@@ -1037,6 +1478,35 @@ class CandidateController extends Controller
             $photoPath = $request->file('photo')->store('candidates/photos', 'public');
         }
 
+        $signaturePath = $candidate->signature_path;
+        if ($request->hasFile('signature')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
+        } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $base64Image = $request->input('signature');
+            $imageParts = explode(';base64,', $base64Image);
+            if (count($imageParts) === 2) {
+                $imageTypeAux = explode('image/', $imageParts[0]);
+                $imageType = $imageTypeAux[1] ?? 'png';
+                $imageBase64 = base64_decode($imageParts[1]);
+                if ($imageBase64 !== false) {
+                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
+                    Storage::disk('public')->put($fileName, $imageBase64);
+                    $signaturePath = $fileName;
+                }
+            }
+        } elseif ($request->boolean('removeSignature')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $signaturePath = null;
+        }
+
         $skills = $request->input('skills');
         if (is_string($skills)) {
             $decoded = json_decode($skills, true);
@@ -1082,6 +1552,7 @@ class CandidateController extends Controller
             'balance'            => array_key_exists('balance', $data) ? ($data['balance'] ?? 0) : $candidate->balance,
             'skills'             => $skills ?? $candidate->skills,
             'photo_path'         => $photoPath,
+            'signature_path'     => $signaturePath,
             'father_name'        => array_key_exists('fatherName', $data) ? $data['fatherName'] : $candidate->father_name,
             'mother_name'        => array_key_exists('motherName', $data) ? $data['motherName'] : $candidate->mother_name,
             'place_of_birth'     => array_key_exists('placeOfBirth', $data) ? $data['placeOfBirth'] : $candidate->place_of_birth,
@@ -1493,6 +1964,182 @@ class CandidateController extends Controller
     }
 
     // --------------------------------------------------------------------------
+    // Shared Candidate Export — GET/POST /candidates/share/{token}/export
+    // --------------------------------------------------------------------------
+
+    public function exportSharedExcel(Request $request, string $token): StreamedResponse
+    {
+        $share = CandidateShare::where('share_token', $token)->first();
+        $candidateIds = [];
+        $companyName = '';
+        $packageName = 'Candidate_Package';
+
+        if ($share) {
+            $candidateIds = $share->candidate_ids ?? [];
+            $companyName = $share->company_name ?? '';
+            $packageName = $share->title ?: ($companyName ? 'Shifted_to_' . $companyName : 'Candidate_Package');
+        } else {
+            $submissions = CandidateSubmission::where('share_token', $token)
+                ->orWhere('share_token', 'like', $token . '-%')
+                ->orWhere('share_token', 'like', $token . '%')
+                ->get();
+            $candidateIds = $submissions->pluck('candidate_id')->filter()->unique()->values()->all();
+            $firstSub = $submissions->first();
+            if ($firstSub) {
+                $companyName = $firstSub->company_name ?? '';
+                $packageName = $companyName ? 'Shifted_to_' . $companyName : 'Shared_Candidates';
+            }
+        }
+
+        if (empty($candidateIds)) {
+            abort(404, 'Shared package not found or contains no candidates.');
+        }
+
+        // Allow filtering by candidate_ids if specified from frontend
+        $reqCandidateIds = $request->input('candidate_ids', []);
+        if (is_string($reqCandidateIds)) {
+            $reqCandidateIds = array_values(array_filter(array_map('trim', explode(',', $reqCandidateIds))));
+        }
+        if (!empty($reqCandidateIds)) {
+            $candidateIds = array_values(array_intersect($candidateIds, $reqCandidateIds));
+        }
+
+        $query = Candidate::with(['company', 'documents', 'withdrawal'])
+            ->whereIn('id', $candidateIds);
+
+        // Maintain original share order if available
+        $orderMap = array_flip($candidateIds);
+        $candidates = $query->get()->sortBy(fn ($c) => $orderMap[$c->id] ?? 999999)->values();
+
+        $format = strtolower($request->input('format', 'xlsx'));
+        $fieldDefinitions = $this->getExportFieldDefinitions();
+
+        // Comprehensive detail fields for shared package
+        $selectedFields = [
+            'code',
+            'name',
+            'father_name',
+            'mother_name',
+            'date_of_birth',
+            'age',
+            'civil_status',
+            'nationality',
+            'citizenship',
+            'passport_number',
+            'passport_issue_date',
+            'passport_expiry',
+            'passport_issued_by',
+            'cnic_number',
+            'phone',
+            'email',
+            'trade',
+            'experience_years',
+            'current_location',
+            'target_country',
+            'expected_salary',
+            'currency',
+            'status',
+            'recruitment_stage',
+            'company',
+            'documents_count',
+            'documents_list',
+        ];
+
+        $fieldsToExport = [];
+        foreach ($selectedFields as $f) {
+            $key = $this->normalizeFieldKey((string) $f);
+            if (isset($fieldDefinitions[$key])) {
+                $fieldsToExport[$key] = $fieldDefinitions[$key];
+            }
+        }
+        if (empty($fieldsToExport)) {
+            $fieldsToExport = $fieldDefinitions;
+        }
+
+        $headers = array_merge(['Sr #'], array_column(array_values($fieldsToExport), 'label'));
+        $cleanPackageName = preg_replace('/[^a-zA-Z0-9_-]/', '_', $packageName) ?: 'candidates';
+        $timestamp = now()->format('Y-m-d');
+
+        if ($format === 'csv') {
+            $filename = "{$cleanPackageName}_candidates_{$timestamp}.csv";
+            return response()->streamDownload(function () use ($headers, $fieldsToExport, $candidates): void {
+                $file = fopen('php://output', 'w');
+                fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+                fputcsv($file, $headers);
+
+                $sr = 1;
+                foreach ($candidates as $cand) {
+                    $row = [$sr++];
+                    foreach ($fieldsToExport as $fieldDef) {
+                        $resolver = $fieldDef['resolver'];
+                        $row[] = (string) $resolver($cand);
+                    }
+                    fputcsv($file, $row);
+                }
+                fclose($file);
+            }, $filename, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+            ]);
+        }
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle(substr($packageName, 0, 31));
+
+        // Headers
+        $colIndex = 1;
+        foreach ($headers as $header) {
+            $sheet->setCellValueExplicit([$colIndex, 1], $header, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $colLetter = Coordinate::stringFromColumnIndex($colIndex);
+            $sheet->getColumnDimension($colLetter)->setAutoSize(true);
+            $colIndex++;
+        }
+
+        $highestCol = Coordinate::stringFromColumnIndex(count($headers));
+        $headerRange = "A1:{$highestCol}1";
+        $sheet->getStyle($headerRange)->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
+        $sheet->getStyle($headerRange)->getFill()->setFillType(Fill::FILL_SOLID)
+            ->getStartColor()->setRGB('107C41'); // Microsoft Excel Brand Green
+        $sheet->getRowDimension(1)->setRowHeight(28);
+
+        // Freeze top header row
+        $sheet->freezePane('A2');
+
+        // Rows
+        $rowNum = 2;
+        $sr = 1;
+        foreach ($candidates as $cand) {
+            $colNum = 1;
+            $sheet->setCellValueExplicit([$colNum++, $rowNum], (string) $sr++, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
+
+            foreach ($fieldsToExport as $fieldDef) {
+                $resolver = $fieldDef['resolver'];
+                $val = (string) $resolver($cand);
+                $sheet->setCellValueExplicit([$colNum++, $rowNum], $val, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            }
+
+            // Zebra striping
+            if ($rowNum % 2 === 1) {
+                $rowRange = "A{$rowNum}:{$highestCol}{$rowNum}";
+                $sheet->getStyle($rowRange)->getFill()->setFillType(Fill::FILL_SOLID)
+                    ->getStartColor()->setRGB('F8FAFC');
+            }
+            $sheet->getRowDimension($rowNum)->setRowHeight(22);
+            $rowNum++;
+        }
+
+        $filename = "{$cleanPackageName}_candidates_{$timestamp}.xlsx";
+        $writer = new Xlsx($spreadsheet);
+
+        return response()->streamDownload(function () use ($writer): void {
+            $writer->save('php://output');
+        }, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
     // Return to Pool — PATCH /candidates/{candidate}/return
     // --------------------------------------------------------------------------
 
@@ -1508,6 +2155,53 @@ class CandidateController extends Controller
         return response()->json([
             'candidate' => $this->presentDetail($candidate->fresh()->load(['company', 'documents', 'submissions', 'withdrawal'])),
             'message'   => 'Candidate returned to the pool.',
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
+    // Return Batch to Pool — POST /candidates/return-batch
+    // --------------------------------------------------------------------------
+
+    public function returnBatchToPool(Request $request): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.update');
+
+        $candidateIds = $request->input('candidate_ids', []);
+        if (is_string($candidateIds)) {
+            $candidateIds = array_values(array_filter(array_map('trim', explode(',', $candidateIds))));
+        }
+
+        if (empty($candidateIds) || !is_array($candidateIds)) {
+            return response()->json([
+                'message' => 'No candidates specified.',
+                'count'   => 0,
+            ], 422);
+        }
+
+        $candidates = Candidate::whereIn('id', $candidateIds)->get();
+        $updatedCount = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($candidates as $candidate) {
+                $candidate->update([
+                    'status'             => 'processing',
+                    'current_company_id' => null,
+                ]);
+                $this->syncCandidateStatus($candidate);
+                $updatedCount++;
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to return candidates: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        return response()->json([
+            'count'   => $updatedCount,
+            'message' => "Successfully removed {$updatedCount} candidate(s) from company.",
         ]);
     }
 
@@ -1869,6 +2563,53 @@ class CandidateController extends Controller
     }
 
     // --------------------------------------------------------------------------
+    // Update Candidate Signature — POST /candidates/{candidate}/signature
+    // --------------------------------------------------------------------------
+
+    public function updateSignature(Request $request, Candidate $candidate): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.update');
+
+        $signaturePath = $candidate->signature_path;
+
+        if ($request->hasFile('signature')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
+        } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $base64Image = $request->input('signature');
+            $imageParts = explode(';base64,', $base64Image);
+            if (count($imageParts) === 2) {
+                $imageTypeAux = explode('image/', $imageParts[0]);
+                $imageType = $imageTypeAux[1] ?? 'png';
+                $imageBase64 = base64_decode($imageParts[1]);
+                if ($imageBase64 !== false) {
+                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
+                    Storage::disk('public')->put($fileName, $imageBase64);
+                    $signaturePath = $fileName;
+                }
+            }
+        } elseif ($request->boolean('removeSignature')) {
+            if ($signaturePath) {
+                Storage::disk('public')->delete($signaturePath);
+            }
+            $signaturePath = null;
+        }
+
+        $candidate->update(['signature_path' => $signaturePath]);
+        $candidate->load(['company', 'documents', 'submissions.company', 'withdrawal']);
+
+        return response()->json([
+            'message'   => 'Candidate electronic signature updated successfully.',
+            'candidate' => $this->presentDetail($candidate->fresh()),
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
     // Private presenters
     // --------------------------------------------------------------------------
 
@@ -1895,6 +2636,7 @@ class CandidateController extends Controller
             'currentCompanyId'    => $candidate->current_company_id ? (string) $candidate->current_company_id : null,
             'currentCompanyName'  => $candidate->company?->name,
             'photoUrl'            => $candidate->photo_url,
+            'signatureUrl'        => $candidate->signature_url,
             'nationality'         => $candidate->nationality,
             'currentLocation'     => $candidate->current_location,
             'targetCountry'       => $candidate->target_country ?? '',
@@ -1954,6 +2696,7 @@ class CandidateController extends Controller
             'expectedSalary'      => (float) $candidate->expected_salary,
             'currency'            => $candidate->currency,
             'photoUrl'            => $candidate->photo_url,
+            'signatureUrl'        => $candidate->signature_url,
             'balance'             => (float) $candidate->balance,
             'fatherName'          => $candidate->father_name,
             'motherName'          => $candidate->mother_name,
