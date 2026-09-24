@@ -41,6 +41,7 @@ class Candidate extends Model
         'expected_salary',
         'currency',
         'photo_path',
+        'signature_path',
         'balance',
         'father_name',
         'mother_name',
@@ -112,5 +113,15 @@ class Candidate extends Model
         }
 
         return Storage::disk('public')->url($this->photo_path);
+    }
+
+    /** Full public URL for the candidate electronic signature. */
+    public function getSignatureUrlAttribute(): ?string
+    {
+        if (! $this->signature_path) {
+            return null;
+        }
+
+        return Storage::disk('public')->url($this->signature_path);
     }
 }

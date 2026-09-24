@@ -9,11 +9,16 @@ use App\Http\Controllers\DriveDocumentController;
 use App\Http\Controllers\LedgerController;
 use App\Http\Controllers\OcrController;
 use App\Http\Controllers\StaffController;
+use App\Http\Controllers\SystemSettingController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('ocr/extract', [OcrController::class, 'extract']);
 Route::get('candidates/share/{token}', [CandidateController::class, 'showShared']);
+Route::match(['get', 'post'], 'candidates/share/{token}/export', [CandidateController::class, 'exportSharedExcel']);
 Route::get('countries', [CountryController::class, 'index']);
+
+// Global system settings (read is public so app can load format before/after login)
+Route::get('settings/date-format', [SystemSettingController::class, 'getDateFormat']);
 
 // Direct endpoints and /auth prefix endpoints
 Route::post('login', [AuthController::class, 'login']);
@@ -28,6 +33,9 @@ Route::prefix('auth')->group(function (): void {
 });
 
 Route::middleware('auth:sanctum')->group(function (): void {
+    // Global system settings — change requires authentication
+    Route::post('settings/date-format', [SystemSettingController::class, 'setDateFormat']);
+
     // Companies
     Route::get('companies', [CompanyController::class, 'index']);
     Route::post('companies', [CompanyController::class, 'store']);
@@ -78,6 +86,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('candidates/bulk', [CandidateController::class, 'bulkStore']);
     Route::post('candidates/shift', [CandidateController::class, 'shiftToCompany']);
     Route::post('candidates/share', [CandidateController::class, 'createShare']);
+    Route::post('candidates/export', [CandidateController::class, 'exportExcel']);
+    Route::post('candidates/return-batch', [CandidateController::class, 'returnBatchToPool']);
 
     // Candidates — single resource
     Route::get('candidates/{candidate}', [CandidateController::class, 'show']);
@@ -90,6 +100,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('candidates/{candidate}/withdraw', [CandidateController::class, 'withdraw']);
     Route::post('candidates/{candidate}/reactivate', [CandidateController::class, 'reactivate']);
     Route::post('candidates/{candidate}/renew-passport', [CandidateController::class, 'renewPassport']);
+    Route::post('candidates/{candidate}/signature', [CandidateController::class, 'updateSignature']);
     Route::post('candidates/{candidate}/cv', [CandidateController::class, 'saveCv']);
 
     // Candidate Documents
