@@ -3,10 +3,12 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CandidateController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\CompanyDocumentTemplateController;
 use App\Http\Controllers\CountryController;
 use App\Http\Controllers\DocumentTypeController;
 use App\Http\Controllers\DriveDocumentController;
 use App\Http\Controllers\LedgerController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OcrController;
 use App\Http\Controllers\StaffController;
 use App\Http\Controllers\SystemSettingController;
@@ -30,15 +32,32 @@ Route::prefix('auth')->group(function (): void {
     Route::post('refresh', [AuthController::class, 'refresh']);
 
     Route::middleware('auth:sanctum')->post('logout', [AuthController::class, 'logout']);
+    Route::middleware('auth:sanctum')->post('fcm-token', [NotificationController::class, 'registerToken']);
 });
 
 Route::middleware('auth:sanctum')->group(function (): void {
+    // Notification inbox (the signed-in user's own)
+    Route::get('notifications', [NotificationController::class, 'index']);
+    Route::get('notifications/unread-count', [NotificationController::class, 'unreadCount']);
+    Route::get('notifications/tokens', [NotificationController::class, 'tokens']);
+    Route::patch('notifications/read-all', [NotificationController::class, 'markAllRead']);
+    Route::delete('notifications/token', [NotificationController::class, 'removeToken']);
+    Route::post('notifications/test', [NotificationController::class, 'test']);
+    Route::patch('notifications/{id}/read', [NotificationController::class, 'markRead'])->whereNumber('id');
+
     // Global system settings — change requires authentication
     Route::post('settings/date-format', [SystemSettingController::class, 'setDateFormat']);
 
     // Companies
     Route::get('companies', [CompanyController::class, 'index']);
     Route::post('companies', [CompanyController::class, 'store']);
+    Route::get('companies/{company}', [CompanyController::class, 'show']);
+    Route::get('companies/{company}/logs', [CompanyController::class, 'logs']);
+    Route::get('companies/{company}/templates', [CompanyDocumentTemplateController::class, 'index']);
+    Route::post('companies/{company}/templates', [CompanyDocumentTemplateController::class, 'store']);
+    Route::patch('companies/{company}/templates/{template}', [CompanyDocumentTemplateController::class, 'update']);
+    Route::delete('companies/{company}/templates/{template}', [CompanyDocumentTemplateController::class, 'destroy']);
+    Route::post('companies/{company}/templates/{template}/generated', [CompanyDocumentTemplateController::class, 'generated']);
     Route::patch('companies/{company}', [CompanyController::class, 'update']);
     Route::delete('companies/{company}', [CompanyController::class, 'destroy']);
 
@@ -94,6 +113,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('candidates/{candidate}', [CandidateController::class, 'update']); // FormData/multipart support
     Route::patch('candidates/{candidate}', [CandidateController::class, 'update']);
     Route::delete('candidates/{candidate}', [CandidateController::class, 'destroy']);
+    Route::patch('candidates/{candidate}/fields', [CandidateController::class, 'updateFields']);
     Route::patch('candidates/{candidate}/stage', [CandidateController::class, 'updateStage']);
     Route::patch('candidates/{candidate}/status', [CandidateController::class, 'updateStatus']);
     Route::patch('candidates/{candidate}/return', [CandidateController::class, 'returnToPool']);

@@ -103,6 +103,24 @@ class LedgerController extends Controller
 
         $entry->load(['candidate:id,first_name,last_name,code', 'company:id,name']);
 
+        $party = $entry->candidate
+            ? trim("{$entry->candidate->first_name} {$entry->candidate->last_name}")
+            : ($entry->company?->name ?? null);
+        \App\Support\Notifier::staff(
+            'PAYMENT_RECORDED',
+            'Payment recorded',
+            sprintf(
+                '%s %s %s recorded%s.',
+                $entry->currency,
+                number_format((float) $entry->amount, 0),
+                str_replace('_', ' ', strtolower((string) $entry->type)),
+                $party ? " for {$party}" : ''
+            ),
+            ['entryId' => $entry->id, 'amount' => (string) $entry->amount, 'currency' => $entry->currency],
+            $entry->candidate_id ? "/dashboard/candidates/{$entry->candidate_id}" : '/dashboard/ledger',
+            $request
+        );
+
         return response()->json([
             'entry' => $this->present($entry),
         ], 201);
