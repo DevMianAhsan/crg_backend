@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Candidate;
 use App\Models\Company;
+use App\Models\CompanyLog;
+use App\Support\Notifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -17,6 +20,39 @@ class CompanyController extends Controller
                 ->get()
                 ->map(fn (Company $company): array => $this->present($company))
                 ->values(),
+        ]);
+    }
+
+    public function show(Request $request, Company $company): JsonResponse
+    {
+        $this->requirePermission($request, 'companies.view');
+
+        return response()->json([
+            'company' => $this->present($company),
+        ]);
+    }
+
+    public function logs(Request $request, Company $company): JsonResponse
+    {
+        $this->requirePermission($request, 'companies.view');
+        $perPage = min(100, max(1, (int) $request->input('per_page', 30)));
+        $page = $company->logs()->paginate($perPage);
+
+        return response()->json([
+            'logs' => collect($page->items())->map(fn (CompanyLog $log): array => [
+                'id' => (string) $log->id,
+                'action' => $log->action,
+                'description' => $log->description,
+                'meta' => $log->meta ?? (object) [],
+                'userName' => $log->user_name ?? 'System',
+                'createdAt' => $log->created_at?->toIso8601String(),
+            ])->values(),
+            'pagination' => [
+                'page' => $page->currentPage(),
+                'perPage' => $page->perPage(),
+                'total' => $page->total(),
+                'lastPage' => $page->lastPage(),
+            ],
         ]);
     }
 
@@ -48,6 +84,16 @@ class CompanyController extends Controller
             'permit_issued' => $data['permitIssued'] ?? 0,
             'rejected' => $data['rejected'] ?? 0,
         ]);
+
+        CompanyLog::record($company->id, 'created', "Company \"{$company->name}\" registered", [], $request);
+        Notifier::staff(
+            'COMPANY_ADDED',
+            'New client company',
+            "{$company->name} ({$company->city}, {$company->country}) was registered.",
+            ['companyId' => $company->id],
+            "/dashboard/companies/{$company->id}",
+            $request
+        );
 
         return response()->json([
             'company' => $this->present($company),
@@ -122,7 +168,9 @@ class CompanyController extends Controller
             if (array_key_exists('rejected', $data)) $updates['rejected'] = (int) ($data['rejected'] ?? 0);
         }
 
+        $before = $company->only(array_keys($updates));
         $company->update($updates);
+        $this->logUpdate($company, $before, $updates, $request);
 
         return response()->json([
             'company' => $this->present($company->fresh()),
@@ -137,6 +185,75 @@ class CompanyController extends Controller
         return response()->json([
             'message' => 'Company deleted successfully.',
         ]);
+    }
+
+    private const FIELD_LABELS = [
+        'name' => 'Name',
+        'industry' => 'Industry',
+        'contact_person' => 'Contact person',
+        'contact_email' => 'Email',
+        'contact_phone' => 'Phone',
+        'country' => 'Country',
+        'city' => 'City',
+        'status' => 'Status',
+    ];
+
+    /** Logs detail edits and permit phase changes as separate entries. */
+    private function logUpdate(Company $company, array $before, array $updates, Request $request): void
+    {
+        $changes = [];
+        foreach (self::FIELD_LABELS as $field => $label) {
+            if (!array_key_exists($field, $updates)) continue;
+            $old = $before[$field] ?? null;
+            $new = $updates[$field];
+            if ((string) $old === (string) $new) continue;
+            $changes[] = ['field' => $label, 'from' => $old, 'to' => $new];
+        }
+        if ($changes) {
+            CompanyLog::record(
+                $company->id,
+                'updated',
+                'Updated ' . implode(', ', array_map(fn ($c) => strtolower($c['field']), $changes)),
+                ['changes' => $changes],
+                $request
+            );
+        }
+
+        if (array_key_exists('permit_phases', $updates)) {
+            $oldPhases = $before['permit_phases'] ?? [];
+            if (!is_array($oldPhases)) $oldPhases = json_decode((string) $oldPhases, true) ?? [];
+            $newPhases = $updates['permit_phases'];
+            if (json_encode(array_values($oldPhases)) === json_encode(array_values($newPhases))) return;
+
+            $sum = fn (array $phases, string $key) => array_sum(array_map(fn ($p) => (int) ($p[$key] ?? 0), $phases));
+            CompanyLog::record(
+                $company->id,
+                'permits_updated',
+                sprintf(
+                    'Permit phases updated: %d accepted, %d rejected across %d phase(s)',
+                    $updates['permit_issued'],
+                    $updates['rejected'],
+                    count($newPhases)
+                ),
+                [
+                    'phases' => count($newPhases),
+                    'previousPhases' => count($oldPhases),
+                    'accepted' => $updates['permit_issued'],
+                    'rejected' => $updates['rejected'],
+                    'previousAccepted' => $sum($oldPhases, 'accepted'),
+                    'previousRejected' => $sum($oldPhases, 'rejected'),
+                ],
+                $request
+            );
+            Notifier::staff(
+                'PERMITS_UPDATED',
+                "Permits updated for {$company->name}",
+                sprintf('%d accepted, %d rejected across %d phase(s).', $updates['permit_issued'], $updates['rejected'], count($newPhases)),
+                ['companyId' => $company->id],
+                "/dashboard/companies/{$company->id}",
+                $request
+            );
+        }
     }
 
     private function present(Company $company): array
@@ -167,7 +284,8 @@ class CompanyController extends Controller
             'permitIssued' => $permitIssued,
             'rejected' => $rejected,
             'permitPhases' => $phases,
-            'totalPlacedCandidates' => 0,
+            'sharedCandidatesCount' => (int) ($company->shared_candidates_count ?? 0),
+            'totalPlacedCandidates' => Candidate::where('current_company_id', $company->id)->where('status', 'placed')->count(),
             'activeCandidatesCount' => 0,
             'joinedDate' => $company->created_at?->toDateString(),
         ];

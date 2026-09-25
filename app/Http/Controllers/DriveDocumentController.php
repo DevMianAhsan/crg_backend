@@ -89,6 +89,8 @@ class DriveDocumentController extends Controller
             'updatedAt' => $document->updated_at?->toDateString(),
             'uploadedBy' => $document->uploader?->name ?? 'System',
             'url' => $document->file_url ? url($document->file_url) : null,
+            // True when the record exists but its file isn't on this server's disk
+            'fileMissing' => !$document->file_path || !Storage::disk('public')->exists($document->file_path),
         ];
     }
 }
