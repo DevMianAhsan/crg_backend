@@ -149,6 +149,17 @@ class CompanyController extends Controller
                 $totalAccepted += $acc;
                 $totalRejected += $rej;
             }
+            // Enforce that processed permits cannot exceed placed candidates pool
+            $placedCount = \App\Models\Candidate::where('current_company_id', $company->id)
+                ->where('status', 'placed')
+                ->count();
+
+            if ($placedCount > 0 && ($totalAccepted + $totalRejected) > $placedCount) {
+                return response()->json([
+                    'message' => "Total accepted and rejected permits (" . ($totalAccepted + $totalRejected) . ") cannot exceed the {$placedCount} placed candidates for this company.",
+                ], 422);
+            }
+
             $updates['permit_phases'] = $cleanPhases;
             $updates['permit_issued'] = $totalAccepted;
             $updates['rejected'] = $totalRejected;

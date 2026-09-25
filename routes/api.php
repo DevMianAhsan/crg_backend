@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Route;
 Route::post('ocr/extract', [OcrController::class, 'extract']);
 Route::get('candidates/share/{token}', [CandidateController::class, 'showShared']);
 Route::match(['get', 'post'], 'candidates/share/{token}/export', [CandidateController::class, 'exportSharedExcel']);
+Route::get('candidates/agreement/{token}', [CandidateController::class, 'showAgreement']);
+Route::post('candidates/agreement/{token}/sign', [CandidateController::class, 'signAgreement']);
 Route::get('countries', [CountryController::class, 'index']);
 
 // Global system settings (read is public so app can load format before/after login)
