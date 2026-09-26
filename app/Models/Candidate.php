@@ -60,6 +60,7 @@ class Candidate extends Model
         'license',
         'current_job',
         'qualification',
+        'notes',
     ];
 
     protected $casts = [

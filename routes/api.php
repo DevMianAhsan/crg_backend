@@ -127,6 +127,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     // Candidate Documents
     Route::post('candidates/{candidate}/documents', [CandidateController::class, 'storeDocument']);
+    Route::match(['post', 'delete'], 'candidates/{candidate}/documents/batch-delete', [CandidateController::class, 'destroyDocumentsBatch']);
     Route::post('candidates/{candidate}/documents/{document}', [CandidateController::class, 'updateDocument']);
     Route::patch('candidates/{candidate}/documents/{document}', [CandidateController::class, 'updateDocument']);
     Route::delete('candidates/{candidate}/documents/{document}', [CandidateController::class, 'destroyDocument']);

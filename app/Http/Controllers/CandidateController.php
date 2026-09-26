@@ -211,6 +211,7 @@ class CandidateController extends Controller
             'license'          => ['nullable', 'string', 'max:150'],
             'currentJob'       => ['nullable', 'string', 'max:150'],
             'qualification'    => ['nullable', 'string', 'max:150'],
+            'notes'            => ['nullable', 'string'],
         ]);
 
         // Enforce unique passport number across all active candidates & historical passports
@@ -309,6 +310,7 @@ class CandidateController extends Controller
             'license'            => $data['license'] ?? null,
             'current_job'        => $data['currentJob'] ?? null,
             'qualification'      => $data['qualification'] ?? null,
+            'notes'              => $data['notes'] ?? null,
         ]);
 
         $this->syncCandidateStatus($candidate);
@@ -491,6 +493,7 @@ class CandidateController extends Controller
         // If no fields specified, use standard default fields
         if (empty($selectedFields) || !is_array($selectedFields)) {
             $selectedFields = [
+                'sr_no',
                 'code',
                 'name',
                 'father_name',
@@ -527,13 +530,15 @@ class CandidateController extends Controller
                 fprintf($file, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
                 fputcsv($file, $headers);
 
+                $srNo = 1;
                 foreach ($candidates as $cand) {
                     $row = [];
                     foreach ($fieldsToExport as $fieldDef) {
                         $resolver = $fieldDef['resolver'];
-                        $row[] = (string) $resolver($cand);
+                        $row[] = (string) $resolver($cand, $srNo);
                     }
                     fputcsv($file, $row);
+                    $srNo++;
                 }
                 fclose($file);
             }, $filename, [
@@ -566,11 +571,12 @@ class CandidateController extends Controller
 
         // Rows
         $rowNum = 2;
+        $srNo = 1;
         foreach ($candidates as $cand) {
             $colNum = 1;
             foreach ($fieldsToExport as $fieldDef) {
                 $resolver = $fieldDef['resolver'];
-                $val = (string) $resolver($cand);
+                $val = (string) $resolver($cand, $srNo);
                 $sheet->setCellValueExplicit([$colNum, $rowNum], $val, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 $colNum++;
             }
@@ -583,6 +589,7 @@ class CandidateController extends Controller
             }
             $sheet->getRowDimension($rowNum)->setRowHeight(22);
             $rowNum++;
+            $srNo++;
         }
 
         $filename = "candidates_export_{$timestamp}.xlsx";
@@ -599,6 +606,12 @@ class CandidateController extends Controller
     {
         $clean = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', trim($key)));
         $aliases = [
+            'sr_no'                => 'sr_no',
+            'sr'                   => 'sr_no',
+            's_no'                 => 'sr_no',
+            'serial_no'            => 'sr_no',
+            'serial_number'        => 'sr_no',
+            'sr_number'            => 'sr_no',
             'candidate_name'       => 'name',
             'full_name'            => 'name',
             'company_name'         => 'company',
@@ -624,6 +637,11 @@ class CandidateController extends Controller
     {
         return [
             // Basic & Identification
+            'sr_no' => [
+                'label'    => 'Sr. No',
+                'category' => 'Basic & Identification',
+                'resolver' => fn ($c, $idx = 1) => (string) $idx,
+            ],
             'code' => [
                 'label'    => 'Candidate Code',
                 'category' => 'Basic & Identification',
@@ -1421,6 +1439,7 @@ class CandidateController extends Controller
             'license'          => ['nullable', 'string', 'max:150'],
             'currentJob'       => ['nullable', 'string', 'max:150'],
             'qualification'    => ['nullable', 'string', 'max:150'],
+            'notes'            => ['nullable', 'string'],
         ]);
 
         // Enforce unique passport number across all candidates (active and history, excluding self)
@@ -1546,6 +1565,7 @@ class CandidateController extends Controller
             'license'            => array_key_exists('license', $data) ? $data['license'] : $candidate->license,
             'current_job'        => array_key_exists('currentJob', $data) ? $data['currentJob'] : $candidate->current_job,
             'qualification'      => array_key_exists('qualification', $data) ? $data['qualification'] : $candidate->qualification,
+            'notes'              => array_key_exists('notes', $data) ? $data['notes'] : $candidate->notes,
         ]);
         $candidate->saveOrFail();
         $savedCandidate = Candidate::with(['company', 'documents', 'submissions', 'withdrawal'])
@@ -2708,6 +2728,51 @@ class CandidateController extends Controller
     }
 
     // --------------------------------------------------------------------------
+    // Batch Delete Documents — POST/DELETE /candidates/{candidate}/documents/batch-delete
+    // --------------------------------------------------------------------------
+
+    public function destroyDocumentsBatch(Request $request, Candidate $candidate): JsonResponse
+    {
+        $this->requirePermission($request, 'documents.delete');
+
+        $data = $request->validate([
+            'document_ids'   => ['nullable', 'array'],
+            'document_ids.*' => ['numeric'],
+            'all'            => ['nullable', 'boolean'],
+        ]);
+
+        $deleteAll = !empty($data['all']);
+        $documentIds = $data['document_ids'] ?? [];
+
+        if (!$deleteAll && empty($documentIds)) {
+            return response()->json(['message' => 'No documents specified for deletion.'], 422);
+        }
+
+        $query = $candidate->documents();
+        if (!$deleteAll) {
+            $query->whereIn('id', $documentIds);
+        }
+
+        $documents = $query->get();
+        $count = 0;
+
+        foreach ($documents as $doc) {
+            if ($doc->file_path) {
+                Storage::disk('public')->delete($doc->file_path);
+            }
+            $doc->delete();
+            $count++;
+        }
+
+        $this->syncCandidateStatus($candidate);
+
+        return response()->json([
+            'message' => $count > 0 ? "Successfully deleted {$count} document(s)." : "No documents deleted.",
+            'deleted_count' => $count,
+        ]);
+    }
+
+    // --------------------------------------------------------------------------
     // Renew Passport — POST /candidates/{candidate}/renew-passport
     // --------------------------------------------------------------------------
 
@@ -2915,6 +2980,7 @@ class CandidateController extends Controller
             'license'             => $candidate->license,
             'currentJob'          => $candidate->current_job,
             'qualification'       => $candidate->qualification,
+            'notes'               => $candidate->notes,
             'cvSummary'           => $candidate->cv_summary,
             'cvData'              => $candidate->cv_data,
             'balance'             => (float) $candidate->balance,
@@ -2972,6 +3038,7 @@ class CandidateController extends Controller
             'license'             => $candidate->license,
             'currentJob'          => $candidate->current_job,
             'qualification'       => $candidate->qualification,
+            'notes'               => $candidate->notes,
             'cvSummary'           => $candidate->cv_summary,
             'cvData'              => $candidate->cv_data,
             'documents'           => $candidate->documents->map(fn (CandidateDocument $d): array => $this->presentDocument($d))->values(),
