@@ -46,6 +46,8 @@ class SystemSettingController extends Controller
      */
     public function setDateFormat(Request $request): JsonResponse
     {
+        $this->requirePermission($request, 'settings.update');
+
         $request->validate([
             'date_format' => ['required', 'string', 'in:' . implode(',', self::ALLOWED_DATE_FORMATS)],
         ]);
