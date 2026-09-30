@@ -28,6 +28,8 @@ class CountryController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->requirePermission($request, 'countries.create');
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255', 'unique:countries,name'],
             'code' => ['nullable', 'string', 'max:10'],
@@ -54,6 +56,8 @@ class CountryController extends Controller
 
     public function update(Request $request, Country $country): JsonResponse
     {
+        $this->requirePermission($request, 'countries.update');
+
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:255', 'unique:countries,name,' . $country->id],
             'code' => ['nullable', 'string', 'max:10'],
@@ -89,8 +93,10 @@ class CountryController extends Controller
         ]);
     }
 
-    public function destroy(Country $country): JsonResponse
+    public function destroy(Request $request, Country $country): JsonResponse
     {
+        $this->requirePermission($request, 'countries.delete');
+
         $country->delete();
 
         return response()->json([

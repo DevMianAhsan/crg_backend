@@ -21,6 +21,8 @@ class StaffController extends Controller
         'ledger.view', 'ledger.create', 'ledger.update', 'ledger.delete',
         'drive.view', 'drive.create', 'drive.update', 'drive.delete',
         'document-types.view', 'document-types.create', 'document-types.update', 'document-types.delete',
+        'countries.view', 'countries.create', 'countries.update', 'countries.delete',
+        'settings.view', 'settings.update',
     ];
 
     public function me(Request $request): JsonResponse
@@ -70,6 +72,13 @@ class StaffController extends Controller
                 $this->catalogueGroup('Document Types', '/dashboard/settings/document-types', [
                     'document-types.view' => 'View document types', 'document-types.create' => 'Add document types',
                     'document-types.update' => 'Edit document types', 'document-types.delete' => 'Delete document types',
+                ]),
+                $this->catalogueGroup('Countries', '/dashboard/settings/countries', [
+                    'countries.view' => 'View countries', 'countries.create' => 'Add countries',
+                    'countries.update' => 'Edit countries', 'countries.delete' => 'Delete countries',
+                ]),
+                $this->catalogueGroup('Settings', '/dashboard/settings', [
+                    'settings.view' => 'View settings', 'settings.update' => 'Edit settings',
                 ]),
                 $this->catalogueGroup('Staff', '/dashboard/staff', [
                     'staff.view' => 'View staff page', 'staff.create' => 'Add staff members',

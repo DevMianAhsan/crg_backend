@@ -235,31 +235,6 @@ class CandidateController extends Controller
         // Generate guaranteed unique sequential codes
         [$code, $psnCode] = $this->generateUniqueCandidateCodes();
 
-        // Handle photo upload
-        $photoPath = null;
-        if ($request->hasFile('photo')) {
-            $photoPath = $request->file('photo')->store('candidates/photos', 'public');
-        }
-
-        // Handle signature upload (file or base64)
-        $signaturePath = null;
-        if ($request->hasFile('signature')) {
-            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
-        } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
-            $base64Image = $request->input('signature');
-            $imageParts = explode(';base64,', $base64Image);
-            if (count($imageParts) === 2) {
-                $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1] ?? 'png';
-                $imageBase64 = base64_decode($imageParts[1]);
-                if ($imageBase64 !== false) {
-                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
-                    Storage::disk('public')->put($fileName, $imageBase64);
-                    $signaturePath = $fileName;
-                }
-            }
-        }
-
         $skills = $request->input('skills');
         if (is_string($skills)) {
             $decoded = json_decode($skills, true);
@@ -285,8 +260,8 @@ class CandidateController extends Controller
             'target_country'     => $data['targetCountry'] ?? null,
             'trade'              => $data['trade'],
             'experience_years'   => $data['experienceYears'] ?? 0,
-            'photo_path'         => $photoPath,
-            'signature_path'     => $signaturePath,
+            'photo_path'         => null,
+            'signature_path'     => null,
             'status'             => 'processing',
             'recruitment_stage'  => 'registered',
             'skills'             => $skills ?? [],
@@ -312,6 +287,38 @@ class CandidateController extends Controller
             'qualification'      => $data['qualification'] ?? null,
             'notes'              => $data['notes'] ?? null,
         ]);
+
+        // Handle photo upload directly inside candidate folder
+        $photoPath = null;
+        if ($request->hasFile('photo')) {
+            $photoPath = $request->file('photo')->store('candidates/' . $candidate->id, 'public');
+        }
+
+        // Handle signature upload directly inside candidate folder (file or base64)
+        $signaturePath = null;
+        if ($request->hasFile('signature')) {
+            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
+        } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
+            $base64Image = $request->input('signature');
+            $imageParts = explode(';base64,', $base64Image);
+            if (count($imageParts) === 2) {
+                $imageTypeAux = explode('image/', $imageParts[0]);
+                $imageType = $imageTypeAux[1] ?? 'png';
+                $imageBase64 = base64_decode($imageParts[1]);
+                if ($imageBase64 !== false) {
+                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
+                    Storage::disk('public')->put($fileName, $imageBase64);
+                    $signaturePath = $fileName;
+                }
+            }
+        }
+
+        if ($photoPath !== null || $signaturePath !== null) {
+            $candidate->update([
+                'photo_path'     => $photoPath,
+                'signature_path' => $signaturePath,
+            ]);
+        }
 
         $this->syncCandidateStatus($candidate);
         $candidate->load(['company', 'documents', 'submissions', 'withdrawal']);
@@ -1470,7 +1477,7 @@ class CandidateController extends Controller
             if ($photoPath) {
                 Storage::disk('public')->delete($photoPath);
             }
-            $photoPath = $request->file('photo')->store('candidates/photos', 'public');
+            $photoPath = $request->file('photo')->store('candidates/' . $candidate->id, 'public');
         }
 
         $signaturePath = $candidate->signature_path;
@@ -1478,7 +1485,7 @@ class CandidateController extends Controller
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
+            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
         } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
@@ -1490,7 +1497,7 @@ class CandidateController extends Controller
                 $imageType = $imageTypeAux[1] ?? 'png';
                 $imageBase64 = base64_decode($imageParts[1]);
                 if ($imageBase64 !== false) {
-                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
+                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
                     Storage::disk('public')->put($fileName, $imageBase64);
                     $signaturePath = $fileName;
                 }
@@ -1805,6 +1812,11 @@ class CandidateController extends Controller
         if ($candidate->photo_path) {
             Storage::disk('public')->delete($candidate->photo_path);
         }
+        if ($candidate->signature_path) {
+            Storage::disk('public')->delete($candidate->signature_path);
+        }
+        // Remove candidate folder from storage if present
+        Storage::disk('public')->deleteDirectory('candidates/' . $candidate->id);
 
         $candidate->delete();
 
@@ -2331,7 +2343,7 @@ class CandidateController extends Controller
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
+            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
         } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
@@ -2343,7 +2355,7 @@ class CandidateController extends Controller
                 $imageType = $imageTypeAux[1] ?? 'png';
                 $imageBase64 = base64_decode($imageParts[1]);
                 if ($imageBase64 !== false) {
-                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
+                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
                     Storage::disk('public')->put($fileName, $imageBase64);
                     $signaturePath = $fileName;
                 }
@@ -2898,7 +2910,7 @@ class CandidateController extends Controller
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $signaturePath = $request->file('signature')->store('candidates/signatures', 'public');
+            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
         } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
@@ -2910,7 +2922,7 @@ class CandidateController extends Controller
                 $imageType = $imageTypeAux[1] ?? 'png';
                 $imageBase64 = base64_decode($imageParts[1]);
                 if ($imageBase64 !== false) {
-                    $fileName = 'candidates/signatures/' . uniqid('sig_', true) . '.' . $imageType;
+                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
                     Storage::disk('public')->put($fileName, $imageBase64);
                     $signaturePath = $fileName;
                 }
