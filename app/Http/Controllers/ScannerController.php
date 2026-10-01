@@ -14,7 +14,6 @@ class ScannerController extends Controller
      */
     public function devices(): JsonResponse
     {
-        // Detect Windows OS
         if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
             return response()->json([
                 'success' => true,
@@ -34,13 +33,19 @@ try {
         if ($info.Type -eq 1) { # 1 = ScannerDeviceType
             $name = "Unknown Scanner"
             $mfg = "Generic"
+            $devId = ""
             try { $name = $info.Properties.Item("Name").Value } catch {}
             try { $mfg = $info.Properties.Item("Manufacturer").Value } catch {}
+            try { $devId = $info.DeviceID } catch {}
+            
+            $isCanon = ($name -match 'Canon|imageFORMULA|DR-' -or $mfg -match 'Canon')
+            
             $scanners += @{
-                id = $info.DeviceID
+                id = $devId
                 name = "$name"
                 manufacturer = "$mfg"
                 type = "scanner"
+                isCanon = [bool]$isCanon
             }
         }
     }
@@ -89,14 +94,14 @@ POWERSHELL;
     }
 
     /**
-     * Trigger a scan on a connected flatbed/document scanner and return the image data in-memory.
+     * Trigger a scan on a connected Canon imageFORMULA DR scanner or flatbed scanner.
      */
     public function scan(Request $request): JsonResponse
     {
         $deviceId = $request->input('deviceId');
         $colorMode = $request->input('colorMode', 'color'); // 'color', 'grayscale', 'bw'
-        $dpi = (int) $request->input('dpi', 200); // 150, 200, 300
-        $format = 'jpeg';
+        $paperSource = $request->input('paperSource', 'auto'); // 'auto', 'feeder', 'flatbed'
+        $dpi = (int) $request->input('dpi', 200);
 
         if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
             return response()->json([
@@ -106,7 +111,7 @@ POWERSHELL;
         }
 
         $tempOutputFile = tempnam(sys_get_temp_dir(), 'wia_scan_') . '.jpg';
-        @unlink($tempOutputFile); // Ensure destination path does not exist yet
+        @unlink($tempOutputFile);
 
         // WIA Color intent: 1 = Color, 2 = Grayscale, 4 = Black & White
         $wiaIntent = 1;
@@ -118,6 +123,7 @@ POWERSHELL;
 
         $escapedDeviceId = $deviceId ? addslashes($deviceId) : '';
         $escapedOutputFile = addslashes($tempOutputFile);
+        $escapedPaperSource = addslashes($paperSource);
 
         $psScript = <<<POWERSHELL
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
@@ -127,6 +133,7 @@ try {
     
     \$device = \$null
     \$targetId = "$escapedDeviceId"
+    \$paperSource = "$escapedPaperSource"
 
     if (\$targetId -and \$targetId.Length -gt 0) {
         foreach (\$info in \$mgr.DeviceInfos) {
@@ -137,13 +144,50 @@ try {
         }
     }
 
+    # If not found by exact ID, find first available scanner (preferring Canon imageFORMULA if present)
+    if (\$device -eq \$null) {
+        \$canonInfo = \$null
+        foreach (\$info in \$mgr.DeviceInfos) {
+            if (\$info.Type -eq 1) {
+                \$name = ""
+                try { \$name = \$info.Properties.Item("Name").Value } catch {}
+                if (\$name -match "Canon|imageFORMULA|DR-") {
+                    \$canonInfo = \$info
+                    break
+                }
+                if (\$canonInfo -eq \$null) {
+                    \$canonInfo = \$info
+                }
+            }
+        }
+        if (\$canonInfo -ne \$null) {
+            \$device = \$canonInfo.Connect()
+        }
+    }
+
     \$image = \$null
     if (\$device -ne \$null) {
-        # Configure scanner properties
+        # Check if device is Canon or sheet-fed document scanner
+        \$devName = ""
+        try { \$devName = \$device.Properties.Item("Name").Value } catch {}
+
+        # Configure Root Device Document Handling (Feeder vs Flatbed for Canon DR scanners)
+        try {
+            # 3088 = WIA_DPS_DOCUMENT_HANDLING_SELECT (1=FEEDER, 2=FLATBED, 4=DUPLEX)
+            # 3087 = WIA_DPS_DOCUMENT_HANDLING_STATUS
+            if (\$paperSource -eq "feeder" -or (\$paperSource -eq "auto" -and (\$devName -match "Canon|imageFORMULA|DR-"))) {
+                \$device.Properties.Item("3088").Value = 1 # Force FEEDER for Canon DR series
+            } elseif (\$paperSource -eq "flatbed") {
+                \$device.Properties.Item("3088").Value = 2 # FLATBED
+            }
+        } catch {
+            # Some drivers do not expose 3088 at root level; ignore
+        }
+
+        # Configure scanner item properties
         \$item = \$device.Items(1)
         try {
-            # Intent: 1 = Color, 2 = Grayscale
-            # 6146 = Current Intent
+            # 6146 = Current Intent (1=Color, 2=Gray)
             \$item.Properties.Item("6146").Value = $wiaIntent
         } catch {}
         try {
@@ -152,9 +196,15 @@ try {
             \$item.Properties.Item("6148").Value = $dpi
         } catch {}
 
-        \$image = \$dialog.ShowTransfer(\$item, "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}", \$false)
+        try {
+            # Transfer directly
+            \$image = \$dialog.ShowTransfer(\$item, "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}", \$false)
+        } catch {
+            # If ShowTransfer fails, fallback to interactive Acquire Dialog
+            \$image = \$dialog.ShowAcquireImage(1, $wiaIntent, 131072, "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}", \$false, \$true, \$false)
+        }
     } else {
-        # Fallback to interactive acquire or default scanner
+        # Fallback to interactive acquire
         \$image = \$dialog.ShowAcquireImage(1, $wiaIntent, 131072, "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}", \$false, \$true, \$false)
     }
 
@@ -162,7 +212,7 @@ try {
         \$image.SaveFile("$escapedOutputFile")
         @{ success = \$true; path = "$escapedOutputFile" } | ConvertTo-Json -Compress
     } else {
-        @{ success = \$false; error = "Scan was cancelled or no image returned." } | ConvertTo-Json -Compress
+        @{ success = \$false; error = "Scan was cancelled or no image was returned by Canon imageFORMULA scanner." } | ConvertTo-Json -Compress
     }
 } catch {
     @{ success = \$false; error = \$_.Exception.Message } | ConvertTo-Json -Compress
@@ -184,7 +234,7 @@ POWERSHELL;
             $mime = 'image/jpeg';
             $size = strlen($rawBytes);
 
-            // Immediately delete temporary scan from disk so nothing is stored in local storage
+            // Immediately delete temporary scan from disk so nothing is stored locally
             @unlink($tempOutputFile);
 
             return response()->json([
@@ -192,17 +242,16 @@ POWERSHELL;
                 'mimeType' => $mime,
                 'data' => 'data:' . $mime . ';base64,' . $base64,
                 'size' => $size,
-                'fileName' => 'scanned_passport_' . date('Ymd_His') . '.jpg',
-                'message' => 'Passport scanned successfully.',
+                'fileName' => 'canon_dr_scan_' . date('Ymd_His') . '.jpg',
+                'message' => 'Canon imageFORMULA scanner scan completed successfully.',
             ]);
         }
 
-        // Clean up temp file if any
         if (file_exists($tempOutputFile)) {
             @unlink($tempOutputFile);
         }
 
-        $errorMsg = $resultJson['error'] ?? 'Scanner did not return an image. Ensure the scanner is powered on, connected, and has a passport placed on the glass.';
+        $errorMsg = $resultJson['error'] ?? 'Canon scanner did not return an image. Ensure the Canon imageFORMULA DR scanner is powered on, USB cable is connected, and the passport is placed in the scanner feed slot/tray.';
         return response()->json([
             'success' => false,
             'message' => $errorMsg,
