@@ -17,6 +17,16 @@ abstract class Controller
         );
     }
 
+    protected function requireAnyPermission(Request $request, array $permissions): void
+    {
+        $user = $request->user();
+        abort_unless(
+            $user instanceof User
+            && ($this->isSuperAdmin($user) || !empty(array_intersect($permissions, $user->permissions ?? []))),
+            403
+        );
+    }
+
     protected function isSuperAdmin(User $user): bool
     {
         return in_array($user->role, ['super_admin', 'super-admin', 'superAdmin'], true);
