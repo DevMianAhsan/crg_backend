@@ -10,14 +10,11 @@ use App\Http\Controllers\DriveDocumentController;
 use App\Http\Controllers\LedgerController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OcrController;
-use App\Http\Controllers\ScannerController;
 use App\Http\Controllers\StaffController;
 use App\Http\Controllers\SystemSettingController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('ocr/extract', [OcrController::class, 'extract']);
-Route::get('scanner/devices', [ScannerController::class, 'devices']);
-Route::post('scanner/scan', [ScannerController::class, 'scan']);
 Route::get('candidates/share/{token}', [CandidateController::class, 'showShared']);
 Route::match(['get', 'post'], 'candidates/share/{token}/export', [CandidateController::class, 'exportSharedExcel']);
 Route::get('candidates/agreement/{token}', [CandidateController::class, 'showAgreement']);
