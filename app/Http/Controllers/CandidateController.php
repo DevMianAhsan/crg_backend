@@ -32,7 +32,7 @@ class CandidateController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $this->requirePermission($request, 'candidates.view');
+        $this->requireAnyPermission($request, ['candidates.view', 'documents.view']);
         $query = Candidate::with(['company', 'documents', 'withdrawal'])
             ->withCount('documents')
             ->orderByDesc('created_at');
@@ -161,7 +161,7 @@ class CandidateController extends Controller
 
     public function show(Request $request, Candidate $candidate): JsonResponse
     {
-        $this->requirePermission($request, 'candidates.view');
+        $this->requireAnyPermission($request, ['candidates.view', 'documents.view']);
         $candidate->load(['company', 'documents', 'submissions.company', 'withdrawal']);
 
         return response()->json([
@@ -191,6 +191,8 @@ class CandidateController extends Controller
             'trade'            => ['required', 'string', 'max:255'],
             'experienceYears'  => ['nullable', 'integer', 'min:0'],
             'balance'          => ['nullable', 'numeric', 'min:0'],
+            'serviceCharges'   => ['nullable', 'numeric', 'min:0'],
+            'service_charges'  => ['nullable', 'numeric', 'min:0'],
             'photo'            => ['nullable', 'image', 'max:5120'], // 5 MB max
             'signature'        => ['nullable'],
             'fatherName'       => ['nullable', 'string', 'max:150'],
@@ -244,6 +246,17 @@ class CandidateController extends Controller
             $skills = array_values(array_filter(array_map('trim', explode(',', $data['trade']))));
         }
 
+        $age = $data['age'] ?? null;
+        if ($age === null && !empty($data['dateOfBirth'])) {
+            try {
+                $age = \Carbon\Carbon::parse($data['dateOfBirth'])->age;
+            } catch (\Throwable) {
+                $age = null;
+            }
+        }
+
+        $serviceCharges = $data['serviceCharges'] ?? $data['service_charges'] ?? $data['balance'] ?? 0;
+
         $candidate = Candidate::create([
             'code'               => $code,
             'psn_code'           => $psnCode,
@@ -265,7 +278,7 @@ class CandidateController extends Controller
             'status'             => 'processing',
             'recruitment_stage'  => 'registered',
             'skills'             => $skills ?? [],
-            'balance'            => $data['balance'] ?? 0,
+            'service_charges'    => $serviceCharges,
             'joined_date'        => now()->toDateString(),
             'father_name'        => $data['fatherName'] ?? null,
             'mother_name'        => $data['motherName'] ?? null,
@@ -281,7 +294,7 @@ class CandidateController extends Controller
             'country'            => $data['country'] ?? null,
             'occupation_field'   => $data['occupationField'] ?? null,
             'care_of'            => $data['careOf'] ?? null,
-            'age'                => $data['age'] ?? null,
+            'age'                => $age,
             'license'            => $data['license'] ?? null,
             'current_job'        => $data['currentJob'] ?? null,
             'qualification'      => $data['qualification'] ?? null,
@@ -860,9 +873,14 @@ class CandidateController extends Controller
                 'resolver' => fn ($c) => $c->company ? $c->company->name : 'Unassigned',
             ],
             'balance' => [
-                'label'    => 'Financial Balance',
+                'label'    => 'Service Charges',
                 'category' => 'Company & Financial',
-                'resolver' => fn ($c) => $c->balance ? number_format((float) $c->balance, 2) : '0.00',
+                'resolver' => fn ($c) => ($c->service_charges ?? $c->balance) ? number_format((float) ($c->service_charges ?? $c->balance), 2) : '0.00',
+            ],
+            'service_charges' => [
+                'label'    => 'Service Charges',
+                'category' => 'Company & Financial',
+                'resolver' => fn ($c) => ($c->service_charges ?? $c->balance) ? number_format((float) ($c->service_charges ?? $c->balance), 2) : '0.00',
             ],
 
             // Documents & Compliance
@@ -1122,12 +1140,12 @@ class CandidateController extends Controller
                     'status'              => in_array($cData['status'] ?? '', ['placed', 'withdrawn'], true) ? $cData['status'] : 'processing',
                     'recruitment_stage'   => 'registered',
                     'skills'              => $skills,
-                    'balance'             => (float) ($cData['balance'] ?? 0),
+                    'service_charges'     => (float) ($cData['balance'] ?? 0),
                     'father_name'         => $cData['fatherName'] ?: null,
                     'mother_name'         => $cData['motherName'] ?: null,
                     'place_of_birth'      => $cData['placeOfBirth'] ?: null,
                     'date_of_birth'       => $cData['dateOfBirth'] ?: null,
-                    'age'                 => !empty($cData['age']) ? (int) $cData['age'] : null,
+                    'age'                 => !empty($cData['age']) ? (int) $cData['age'] : (!empty($cData['dateOfBirth']) ? (function($dob) { try { return (new \DateTime($dob))->diff(new \DateTime())->y; } catch (\Throwable) { return null; } })($cData['dateOfBirth']) : null),
                     'civil_status'        => $cData['civilStatus'] ?: null,
                     'children_count'      => $cData['childrenCount'] ?: null,
                     'care_of'             => $cData['careOf'] ?: null,
@@ -1241,7 +1259,7 @@ class CandidateController extends Controller
             'passportNumber'     => ['passportno', 'passport_no', 'passportnumber', 'passport_number', 'passport', 'passno', 'pass_no'],
             'careOf'             => ['co', 'c_o', 'careof', 'care_of'],
             'phone'              => ['contactno', 'contact_no', 'contact', 'contactnumber', 'phone', 'phonenumber', 'phone_number', 'mobile', 'mobilenumber', 'mobile_no'],
-            'balance'            => ['rate', 'package_rate', 'packagerate', 'contract_rate', 'contractrate', 'balance', 'fee'],
+            'balance'            => ['servicecharges', 'service_charges', 'servicecharge', 'service_charge', 'service_fee', 'rate', 'package_rate', 'packagerate', 'contract_rate', 'contractrate', 'balance', 'fee'],
             'dateOfBirth'        => ['dateofbirth', 'date_of_birth', 'dob', 'birthdate', 'birth_date'],
             'age'                => ['age'],
             'joinedDate'         => ['filereceivingdate', 'file_receiving_date', 'receivingdate', 'receiving_date', 'filedate', 'file_date', 'joineddate', 'joined_date'],
@@ -1303,8 +1321,8 @@ class CandidateController extends Controller
             $lastName  = $parts[1] ?? '';
         }
 
-        // Clean Rate / Balance: e.g. "4,000,000" -> 4000000.00
-        $balanceRaw = $row['balance'] ?? $row['rate'] ?? null;
+        // Clean Service Charges / Rate / Balance: e.g. "4,000,000" -> 4000000.00
+        $balanceRaw = $row['service_charges'] ?? $row['serviceCharges'] ?? $row['balance'] ?? $row['rate'] ?? null;
         $balance = 0.0;
         if ($balanceRaw !== null && $balanceRaw !== '') {
             if (is_numeric($balanceRaw)) {
@@ -1425,6 +1443,8 @@ class CandidateController extends Controller
             'trade'            => ['nullable', 'string', 'max:255'],
             'experienceYears'  => ['nullable', 'integer', 'min:0'],
             'balance'          => ['nullable', 'numeric', 'min:0'],
+            'serviceCharges'   => ['nullable', 'numeric', 'min:0'],
+            'service_charges'  => ['nullable', 'numeric', 'min:0'],
             'photo'            => ['nullable', 'image', 'max:5120'],
             'fatherName'       => ['nullable', 'string', 'max:150'],
             'motherName'       => ['nullable', 'string', 'max:150'],
@@ -1534,6 +1554,22 @@ class CandidateController extends Controller
             }
         }
 
+        $dob = array_key_exists('dateOfBirth', $data) ? $data['dateOfBirth'] : $candidate->date_of_birth;
+        $age = array_key_exists('age', $data) ? $data['age'] : null;
+        if ($age === null && !empty($dob)) {
+            try {
+                $age = \Carbon\Carbon::parse($dob)->age;
+            } catch (\Throwable) {
+                $age = $candidate->age;
+            }
+        }
+
+        $serviceCharges = array_key_exists('serviceCharges', $data)
+            ? $data['serviceCharges']
+            : (array_key_exists('service_charges', $data)
+                ? $data['service_charges']
+                : (array_key_exists('balance', $data) ? $data['balance'] : $candidate->service_charges));
+
         $candidate->forceFill([
             'first_name'         => $data['firstName'],
             'last_name'          => array_key_exists('lastName', $data) ? $data['lastName'] : $candidate->last_name,
@@ -1548,14 +1584,14 @@ class CandidateController extends Controller
             'target_country'     => $data['targetCountry'] ?? null,
             'trade'              => $tradeValue,
             'experience_years'   => $data['experienceYears'] ?? 0,
-            'balance'            => array_key_exists('balance', $data) ? ($data['balance'] ?? 0) : $candidate->balance,
+            'service_charges'    => $serviceCharges ?? 0,
             'skills'             => $skills ?? $candidate->skills,
             'photo_path'         => $photoPath,
             'signature_path'     => $signaturePath,
             'father_name'        => array_key_exists('fatherName', $data) ? $data['fatherName'] : $candidate->father_name,
             'mother_name'        => array_key_exists('motherName', $data) ? $data['motherName'] : $candidate->mother_name,
             'place_of_birth'     => array_key_exists('placeOfBirth', $data) ? $data['placeOfBirth'] : $candidate->place_of_birth,
-            'date_of_birth'      => array_key_exists('dateOfBirth', $data) ? $data['dateOfBirth'] : $candidate->date_of_birth,
+            'date_of_birth'      => $dob,
             'civil_status'       => array_key_exists('civilStatus', $data) ? $data['civilStatus'] : $candidate->civil_status,
             'children_count'     => array_key_exists('childrenCount', $data) ? $data['childrenCount'] : $candidate->children_count,
             'passport_series'    => array_key_exists('passportSeries', $data) ? $data['passportSeries'] : $candidate->passport_series,
@@ -1568,7 +1604,7 @@ class CandidateController extends Controller
             'cv_summary'         => $cvSummary,
             'cv_data'            => $cvData,
             'care_of'            => array_key_exists('careOf', $data) ? $data['careOf'] : $candidate->care_of,
-            'age'                => array_key_exists('age', $data) ? $data['age'] : $candidate->age,
+            'age'                => $age,
             'license'            => array_key_exists('license', $data) ? $data['license'] : $candidate->license,
             'current_job'        => array_key_exists('currentJob', $data) ? $data['currentJob'] : $candidate->current_job,
             'qualification'      => array_key_exists('qualification', $data) ? $data['qualification'] : $candidate->qualification,
@@ -2490,7 +2526,7 @@ class CandidateController extends Controller
 
     public function withdraw(Request $request, Candidate $candidate): JsonResponse
     {
-        $this->requirePermission($request, 'candidates.update');
+        $this->requirePermission($request, 'candidates.withdraw');
         $data = $request->validate([
             'stage'                  => ['required', 'string'],
             'deductionPercentage'    => ['required', 'numeric', 'min:0', 'max:100'],
@@ -2547,7 +2583,7 @@ class CandidateController extends Controller
 
     public function reactivate(Request $request, Candidate $candidate): JsonResponse
     {
-        $this->requirePermission($request, 'candidates.update');
+        $this->requirePermission($request, 'candidates.withdraw');
 
         // Delete candidate withdrawal record if any
         $candidate->withdrawal()?->delete();
@@ -2995,7 +3031,8 @@ class CandidateController extends Controller
             'notes'               => $candidate->notes,
             'cvSummary'           => $candidate->cv_summary,
             'cvData'              => $candidate->cv_data,
-            'balance'             => (float) $candidate->balance,
+            'balance'             => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
+            'serviceCharges'      => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
             'joinedDate'          => $candidate->joined_date?->toDateString(),
             'documents'           => $candidate->relationLoaded('documents') ? $candidate->documents->map(fn (CandidateDocument $d): array => $this->presentDocument($d))->values() : [],
         ];
@@ -3033,7 +3070,8 @@ class CandidateController extends Controller
             'signatureUrl'        => $candidate->signature_url,
             'agreementToken'      => $candidate->ensureAgreementToken(),
             'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
-            'balance'             => (float) $candidate->balance,
+            'balance'             => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
+            'serviceCharges'      => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
             'fatherName'          => $candidate->father_name,
             'motherName'          => $candidate->mother_name,
             'placeOfBirth'        => $candidate->place_of_birth,

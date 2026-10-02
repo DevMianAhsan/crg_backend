@@ -41,7 +41,7 @@ class Candidate extends Model
         'signature_path',
         'agreement_token',
         'terms_agreed_at',
-        'balance',
+        'service_charges',
         'father_name',
         'mother_name',
         'place_of_birth',
@@ -72,10 +72,25 @@ class Candidate extends Model
         'joined_date'         => 'date',
         'date_of_birth'       => 'date',
         'terms_agreed_at'     => 'datetime',
-        'balance'             => 'decimal:2',
+        'service_charges'     => 'decimal:2',
         'experience_years'    => 'integer',
         'age'                 => 'integer',
     ];
+
+    public function getServiceChargesAttribute(): float
+    {
+        return (float) ($this->attributes['service_charges'] ?? 0);
+    }
+
+    public function getBalanceAttribute(): float
+    {
+        return (float) ($this->attributes['service_charges'] ?? 0);
+    }
+
+    public function setBalanceAttribute($value): void
+    {
+        $this->attributes['service_charges'] = $value;
+    }
 
     protected static function booted(): void
     {
@@ -131,6 +146,10 @@ class Candidate extends Model
             return null;
         }
 
+        if (function_exists('request') && request()?->header('host')) {
+            return asset('storage/' . ltrim($this->photo_path, '/'));
+        }
+
         return Storage::disk('public')->url($this->photo_path);
     }
 
@@ -139,6 +158,10 @@ class Candidate extends Model
     {
         if (! $this->signature_path) {
             return null;
+        }
+
+        if (function_exists('request') && request()?->header('host')) {
+            return asset('storage/' . ltrim($this->signature_path, '/'));
         }
 
         return Storage::disk('public')->url($this->signature_path);

@@ -15,7 +15,7 @@ class StaffController extends Controller
         'staff.create',
         'staff.update',
         'staff.delete',
-        'candidates.view', 'candidates.create', 'candidates.update', 'candidates.delete', 'candidates.shift',
+        'candidates.view', 'candidates.create', 'candidates.update', 'candidates.delete', 'candidates.shift', 'candidates.withdraw',
         'documents.view', 'documents.create', 'documents.update', 'documents.delete', 'documents.verify',
         'companies.view', 'companies.create', 'companies.update', 'companies.delete',
         'ledger.view', 'ledger.create', 'ledger.update', 'ledger.delete',
@@ -50,7 +50,7 @@ class StaffController extends Controller
                 $this->catalogueGroup('Candidates', '/dashboard/candidates', [
                     'candidates.view' => 'View candidates', 'candidates.create' => 'Add candidates',
                     'candidates.update' => 'Edit candidates', 'candidates.delete' => 'Delete candidates',
-                    'candidates.shift' => 'Move candidates',
+                    'candidates.shift' => 'Move candidates', 'candidates.withdraw' => 'Withdraw candidates',
                 ]),
                 $this->catalogueGroup('Documents', '/dashboard/documents', [
                     'documents.view' => 'View documents', 'documents.create' => 'Upload documents',
