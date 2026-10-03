@@ -109,6 +109,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('candidates/share', [CandidateController::class, 'createShare']);
     Route::post('candidates/export', [CandidateController::class, 'exportExcel']);
     Route::post('candidates/return-batch', [CandidateController::class, 'returnBatchToPool']);
+    Route::match(['post', 'delete'], 'candidates/batch-delete', [CandidateController::class, 'destroyBatch']);
 
     // Candidates — single resource
     Route::get('candidates/{candidate}', [CandidateController::class, 'show']);

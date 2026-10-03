@@ -203,7 +203,6 @@ class CandidateController extends Controller
             'childrenCount'    => ['nullable', 'string', 'max:20'],
             'passportSeries'   => ['nullable', 'string', 'max:50'],
             'passportIssuedBy' => ['nullable', 'string', 'max:150'],
-            'formerName'       => ['nullable', 'string', 'max:150'],
             'citizenship'      => ['nullable', 'string', 'max:100'],
             'town'             => ['nullable', 'string', 'max:150'],
             'country'          => ['nullable', 'string', 'max:100'],
@@ -257,6 +256,20 @@ class CandidateController extends Controller
 
         $serviceCharges = $data['serviceCharges'] ?? $data['service_charges'] ?? $data['balance'] ?? 0;
 
+        $passportSeries = $data['passportSeries'] ?? null;
+        if (empty($passportSeries) && !empty($data['passportNumber'])) {
+            if (preg_match('/^([A-Za-z]+)/', trim($data['passportNumber']), $pm)) {
+                $passportSeries = strtoupper($pm[1]);
+            }
+        }
+
+        $fatherName = $this->normalizePersonName($data['fatherName'] ?? null, $data['lastName'] ?? null);
+        $careOf = !empty($data['careOf']) ? trim((string) $data['careOf']) : null;
+
+        $placeOfBirth = $data['placeOfBirth'] ?? $data['town'] ?? $data['currentLocation'] ?? null;
+        $town = $data['town'] ?? $placeOfBirth ?? $data['currentLocation'] ?? null;
+        $currentLocation = $data['currentLocation'] ?? $placeOfBirth ?? $town ?? null;
+
         $candidate = Candidate::create([
             'code'               => $code,
             'psn_code'           => $psnCode,
@@ -269,7 +282,7 @@ class CandidateController extends Controller
             'passport_issue_date'=> $data['passportIssueDate'] ?? null,
             'cnic_number'        => $data['cnicNumber'] ?? null,
             'nationality'        => !empty($data['nationality']) ? $data['nationality'] : null,
-            'current_location'   => !empty($data['currentLocation']) ? $data['currentLocation'] : null,
+            'current_location'   => !empty($currentLocation) ? $currentLocation : null,
             'target_country'     => $data['targetCountry'] ?? null,
             'trade'              => $data['trade'],
             'experience_years'   => $data['experienceYears'] ?? 0,
@@ -280,20 +293,19 @@ class CandidateController extends Controller
             'skills'             => $skills ?? [],
             'service_charges'    => $serviceCharges,
             'joined_date'        => now()->toDateString(),
-            'father_name'        => $data['fatherName'] ?? null,
+            'father_name'        => $fatherName,
             'mother_name'        => $data['motherName'] ?? null,
-            'place_of_birth'     => $data['placeOfBirth'] ?? null,
+            'place_of_birth'     => $placeOfBirth,
             'date_of_birth'      => $data['dateOfBirth'] ?? null,
             'civil_status'       => $data['civilStatus'] ?? null,
             'children_count'     => $data['childrenCount'] ?? null,
-            'passport_series'    => $data['passportSeries'] ?? null,
+            'passport_series'    => $passportSeries,
             'passport_issued_by' => $data['passportIssuedBy'] ?? null,
-            'former_name'        => $data['formerName'] ?? null,
             'citizenship'        => $data['citizenship'] ?? null,
-            'town'               => $data['town'] ?? null,
+            'town'               => $town,
             'country'            => $data['country'] ?? null,
             'occupation_field'   => $data['occupationField'] ?? null,
-            'care_of'            => $data['careOf'] ?? null,
+            'care_of'            => $careOf,
             'age'                => $age,
             'license'            => $data['license'] ?? null,
             'current_job'        => $data['currentJob'] ?? null,
@@ -748,11 +760,6 @@ class CandidateController extends Controller
                 'label'    => 'License',
                 'category' => 'Personal Information',
                 'resolver' => fn ($c) => $c->license ?? '',
-            ],
-            'former_name' => [
-                'label'    => 'Former Name',
-                'category' => 'Personal Information',
-                'resolver' => fn ($c) => $c->former_name ?? '',
             ],
 
             // Passport & Identity
@@ -1352,7 +1359,7 @@ class CandidateController extends Controller
         return [
             'firstName'          => $firstName,
             'lastName'           => $lastName ?: null,
-            'fatherName'         => trim((string) ($row['fatherName'] ?? '')) ?: null,
+            'fatherName'         => $this->normalizePersonName(trim((string) ($row['fatherName'] ?? ''))) ?: null,
             'passportNumber'     => strtoupper(trim((string) ($row['passportNumber'] ?? ''))),
             'careOf'             => trim((string) ($row['careOf'] ?? '')) ?: null,
             'phone'              => trim((string) ($row['phone'] ?? '')) ?: null,
@@ -1454,7 +1461,6 @@ class CandidateController extends Controller
             'childrenCount'    => ['nullable', 'string', 'max:20'],
             'passportSeries'   => ['nullable', 'string', 'max:50'],
             'passportIssuedBy' => ['nullable', 'string', 'max:150'],
-            'formerName'       => ['nullable', 'string', 'max:150'],
             'citizenship'      => ['nullable', 'string', 'max:100'],
             'town'             => ['nullable', 'string', 'max:150'],
             'country'          => ['nullable', 'string', 'max:100'],
@@ -1588,7 +1594,7 @@ class CandidateController extends Controller
             'skills'             => $skills ?? $candidate->skills,
             'photo_path'         => $photoPath,
             'signature_path'     => $signaturePath,
-            'father_name'        => array_key_exists('fatherName', $data) ? $data['fatherName'] : $candidate->father_name,
+            'father_name'        => array_key_exists('fatherName', $data) ? $this->normalizePersonName($data['fatherName'], $data['lastName'] ?? $candidate->last_name) : $candidate->father_name,
             'mother_name'        => array_key_exists('motherName', $data) ? $data['motherName'] : $candidate->mother_name,
             'place_of_birth'     => array_key_exists('placeOfBirth', $data) ? $data['placeOfBirth'] : $candidate->place_of_birth,
             'date_of_birth'      => $dob,
@@ -1596,7 +1602,6 @@ class CandidateController extends Controller
             'children_count'     => array_key_exists('childrenCount', $data) ? $data['childrenCount'] : $candidate->children_count,
             'passport_series'    => array_key_exists('passportSeries', $data) ? $data['passportSeries'] : $candidate->passport_series,
             'passport_issued_by' => array_key_exists('passportIssuedBy', $data) ? $data['passportIssuedBy'] : $candidate->passport_issued_by,
-            'former_name'        => array_key_exists('formerName', $data) ? $data['formerName'] : $candidate->former_name,
             'citizenship'        => array_key_exists('citizenship', $data) ? $data['citizenship'] : $candidate->citizenship,
             'town'               => array_key_exists('town', $data) ? $data['town'] : $candidate->town,
             'country'            => array_key_exists('country', $data) ? $data['country'] : $candidate->country,
@@ -1658,7 +1663,6 @@ class CandidateController extends Controller
             'civilStatus'       => ['sometimes', 'nullable', 'string', 'max:50'],
             'childrenCount'     => ['sometimes', 'nullable', 'string', 'max:20'],
             'license'           => ['sometimes', 'nullable', 'string', 'max:150'],
-            'formerName'        => ['sometimes', 'nullable', 'string', 'max:150'],
         ];
         $data = $request->validate($rules);
 
@@ -1674,7 +1678,7 @@ class CandidateController extends Controller
             'fatherName' => 'father_name', 'motherName' => 'mother_name',
             'careOf' => 'care_of', 'dateOfBirth' => 'date_of_birth', 'age' => 'age',
             'placeOfBirth' => 'place_of_birth', 'civilStatus' => 'civil_status',
-            'childrenCount' => 'children_count', 'license' => 'license', 'formerName' => 'former_name',
+            'childrenCount' => 'children_count', 'license' => 'license',
         ];
 
         $updates = [];
@@ -1725,9 +1729,6 @@ class CandidateController extends Controller
         }
         if (!empty($cvData['givenName']) || !empty($fields['firstName'])) {
             $fillData['first_name'] = $fields['firstName'] ?? $cvData['givenName'] ?? $candidate->first_name;
-        }
-        if (array_key_exists('formerName', $cvData)) {
-            $fillData['former_name'] = $cvData['formerName'];
         }
         if (array_key_exists('fatherName', $cvData)) {
             $fillData['father_name'] = $cvData['fatherName'];
@@ -1845,18 +1846,55 @@ class CandidateController extends Controller
     public function destroy(Request $request, Candidate $candidate): JsonResponse
     {
         $this->requirePermission($request, 'candidates.delete');
-        if ($candidate->photo_path) {
-            Storage::disk('public')->delete($candidate->photo_path);
-        }
-        if ($candidate->signature_path) {
-            Storage::disk('public')->delete($candidate->signature_path);
-        }
-        // Remove candidate folder from storage if present
-        Storage::disk('public')->deleteDirectory('candidates/' . $candidate->id);
 
+        // Soft delete candidate: keeps candidate, documents, and all records preserved in database & disk storage
         $candidate->delete();
 
         return response()->json(['message' => 'Candidate deleted successfully.']);
+    }
+
+    // --------------------------------------------------------------------------
+    // Destroy Batch — POST/DELETE /candidates/batch-delete
+    // --------------------------------------------------------------------------
+
+    public function destroyBatch(Request $request): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.delete');
+
+        $candidateIds = $request->input('candidate_ids', []);
+        if (is_string($candidateIds)) {
+            $candidateIds = array_values(array_filter(array_map('trim', explode(',', $candidateIds))));
+        }
+
+        if (empty($candidateIds) || !is_array($candidateIds)) {
+            return response()->json([
+                'message' => 'No candidates specified.',
+                'count'   => 0,
+            ], 422);
+        }
+
+        $candidates = Candidate::whereIn('id', $candidateIds)->get();
+        $deletedCount = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($candidates as $candidate) {
+                // Soft delete candidate: keeps files and records preserved in DB & storage
+                $candidate->delete();
+                $deletedCount++;
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to delete candidates: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        return response()->json([
+            'message' => "Successfully deleted {$deletedCount} candidate(s).",
+            'count'   => $deletedCount,
+        ]);
     }
 
     // --------------------------------------------------------------------------
@@ -2916,8 +2954,14 @@ class CandidateController extends Controller
         }
 
         // 4. Update candidate with new active passport details & updated history
+        $newSeries = null;
+        if (preg_match('/^([A-Za-z]+)/', trim($data['passportNumber']), $pm)) {
+            $newSeries = strtoupper($pm[1]);
+        }
+
         $candidate->update([
             'passport_number'     => $data['passportNumber'],
+            'passport_series'     => $newSeries ?? $candidate->passport_series,
             'passport_expiry'     => $data['passportExpiry'],
             'passport_issue_date' => $data['passportIssueDate'] ?? null,
             'passport_history'    => $currentHistory,
@@ -3018,7 +3062,6 @@ class CandidateController extends Controller
             'dateOfBirth'         => $candidate->date_of_birth?->toDateString(),
             'civilStatus'         => $candidate->civil_status,
             'childrenCount'       => $candidate->children_count,
-            'formerName'          => $candidate->former_name,
             'citizenship'         => $candidate->citizenship,
             'town'                => $candidate->town,
             'country'             => $candidate->country,
@@ -3078,7 +3121,6 @@ class CandidateController extends Controller
             'dateOfBirth'         => $candidate->date_of_birth?->toDateString(),
             'civilStatus'         => $candidate->civil_status,
             'childrenCount'       => $candidate->children_count,
-            'formerName'          => $candidate->former_name,
             'citizenship'         => $candidate->citizenship,
             'town'                => $candidate->town,
             'country'             => $candidate->country,
@@ -3297,5 +3339,54 @@ class CandidateController extends Controller
         }
 
         return [$code, $psnCode];
+    }
+
+    private function normalizePersonName(?string $name, ?string $candidateSurname = null): ?string
+    {
+        if ($name === null) {
+            return null;
+        }
+        $cleaned = trim(preg_replace('/\s+/', ' ', str_replace(["\r", "\n"], ' ', $name)));
+        if ($cleaned === '') {
+            return null;
+        }
+
+        // Strip leading/trailing PAK/PAKISTAN
+        $cleaned = preg_replace('/^PAK\s+/i', '', $cleaned);
+        $cleaned = preg_replace('/[,\\/\\-\\s]+\\b(PAK|PAKISTAN|PAKISTANI)\\b$/i', '', $cleaned);
+        $cleaned = trim($cleaned);
+
+        if ($cleaned === '') {
+            return null;
+        }
+
+        if (str_contains($cleaned, ',')) {
+            $parts = array_values(array_filter(
+                array_map('trim', explode(',', $cleaned)),
+                fn ($p) => $p !== '' && !preg_match('/^(PAK|PAKISTAN|PAKISTANI)$/i', $p)
+            ));
+
+            if (count($parts) === 2) {
+                return trim($parts[1] . ' ' . $parts[0]);
+            }
+            if (count($parts) === 1) {
+                return $parts[0];
+            }
+        }
+
+        // If no comma, check if second word matches candidate surname (e.g. "MEHMOOD ARSHAD" when candidate surname is "ARSHAD")
+        if (!empty($candidateSurname)) {
+            $sName = strtoupper(trim((string) $candidateSurname));
+            $words = array_values(array_filter(preg_split('/\s+/', $cleaned)));
+            if (count($words) === 2) {
+                $w1 = strtoupper($words[0]);
+                $w2 = strtoupper($words[1]);
+                if ($w2 === $sName && $w1 !== $sName) {
+                    return trim($words[1] . ' ' . $words[0]);
+                }
+            }
+        }
+
+        return $cleaned;
     }
 }

@@ -101,9 +101,11 @@ Analyze this document (image or PDF) thoroughly.
 CRITICAL RULES FOR PAKISTANI PASSPORTS:
 1. When two pages of an open passport booklet are visible (the green inside cover page with the Pakistan emblem on one side, and the bio-data page with applicant photograph and MRZ lines on the other side):
    - The large bold number starting with 'G' printed on the green inside cover page (e.g. G8863371, G4427638) is ONLY a booklet/tracking number. It is NOT the passport number!
-   - You MUST extract the official Passport Number from the BIO-DATA page (under 'Passport No.', beside/above the photo, and in the bottom/edge MRZ lines, e.g. JA1910572, ST1170261).
+   - You MUST extract the official Passport Number from the BIO-DATA page (under 'Passport No.', beside/above the photo, and in the bottom/edge MRZ lines, e.g. JA1910572, SD243345, ST1170261).
    - If the bio-data page is rotated sideways (90 degrees or 270 degrees), read the text and MRZ according to its orientation.
-   - The passport number in the MRZ line 2 ALWAYS starts with the 9-character passport number (e.g. JA1910572, ST1170261).
+   - The passport number in the MRZ line 2 ALWAYS starts with the 9-character passport number (e.g. JA1910572, SD243345, ST1170261).
+   - CRITICAL FOR FATHER NAME: Pakistani passports print Father Name as "SURNAME, GIVEN_NAME" (e.g. 'MEHMOOD, ARSHAD', 'KHAN, TARIQ', 'CHAUDHRY, MUHAMMAD'). You MUST ALWAYS return it in natural order: "ARSHAD MEHMOOD", "TARIQ KHAN", "MUHAMMAD CHAUDHRY". NEVER return 'MEHMOOD ARSHAD' or 'MEHMOOD, ARSHAD'.
+   - PLACE OF BIRTH: Extract the exact complete Place of Birth / Lieu de naissance (e.g. 'FAISALABAD', 'LAHORE', 'RAWALPINDI', 'MANDI BAHAUDDIN, PAK') into 'place_of_birth' and 'town' fields.
    - CRITICAL FOR CNIC / NATIONAL ID: On Pakistani passports, also extract the 13-digit National Identity Card number / CNIC found under "National ID No." or "No. d'identification nationale" or "Identity No." (e.g. 33100-1234567-1 or 3310012345671) into the "cnic" field formatted as XXXXX-XXXXXXX-X.
 2. For Character Certificate / Police Clearance:
    - Extract the certificate reference number (e.g. FSD-12765678, CKW-4755780). DO NOT use the applicant's passport number mentioned in the text.
@@ -123,13 +125,16 @@ Extract all visible details and return ONLY a valid JSON object with this exact 
   "issuing_country": string or null (Full official country title, e.g. "Pakistan" or "United Kingdom"),
   "country_code": string or null (3-letter ISO code, e.g. "PAK", "GBR"),
   "document_number": string or null (The main number: passport number, CNIC identity number, certificate reference number, or license number),
+  "passport_series": string or null (The alphabet prefix series like "SD", "JA", "ST"),
   "cnic": string or null (13-digit Pakistani National ID / CNIC formatted as 00000-0000000-0),
-  "surname": string or null (Last name / father name if applicable),
+  "surname": string or null (Last name),
   "given_names": string or null (First & middle names),
+  "father_name": string or null (Father name or Nom du père),
   "nationality": string or null (e.g. "Pakistani"),
   "date_of_birth": string or null ("YYYY-MM-DD" format),
   "gender": string or null ("M", "F", or "X"),
-  "place_of_birth": string or null,
+  "place_of_birth": string or null (e.g. "FAISALABAD", "LAHORE"),
+  "town": string or null (Town / City of origin e.g. "FAISALABAD"),
   "authority": string or null (e.g. "NADRA", "Islamabad Police", "Punjab Police", "HMPO", "Ministry of Health", "GAMCA"),
   "date_of_issue": string or null ("YYYY-MM-DD" format),
   "date_of_expiry": string or null ("YYYY-MM-DD" format),
@@ -277,27 +282,47 @@ PROMPT;
             }
         }
 
+        $docNum = $extractedJson['document_number'] ?? $extractedJson['passport_number'] ?? null;
+        $passportSeries = $extractedJson['passport_series'] ?? null;
+        if (!$passportSeries && $docNum && preg_match('/^([A-Za-z]+)/', trim($docNum), $pm)) {
+            $passportSeries = strtoupper($pm[1]);
+        }
+
+        $placeOfBirth = $extractedJson['place_of_birth'] ?? null;
+        $town = $extractedJson['town'] ?? null;
+        if (!$town && $placeOfBirth) {
+            $town = trim($placeOfBirth);
+        }
+        if (!$placeOfBirth && $town) {
+            $placeOfBirth = trim($town);
+        }
+
+        $fatherName = $this->normalizePersonNameSafe($extractedJson['father_name'] ?? null, $extractedJson['surname'] ?? null);
+
         $formattedData = [
-            'document_type' => $extractedJson['document_type'] ?? 'Passport',
-            'title' => $title,
-            'document_number' => $extractedJson['document_number'] ?? $extractedJson['passport_number'] ?? null,
-            'cnic' => $cnic,
-            'surname' => $extractedJson['surname'] ?? null,
-            'given_names' => $extractedJson['given_names'] ?? null,
-            'nationality' => $extractedJson['nationality'] ?? $extractedJson['country_code'] ?? null,
+            'document_type'   => $extractedJson['document_type'] ?? 'Passport',
+            'title'           => $title,
+            'document_number' => $docNum,
+            'passport_series' => $passportSeries,
+            'cnic'            => $cnic,
+            'surname'         => $extractedJson['surname'] ?? null,
+            'given_names'     => $extractedJson['given_names'] ?? null,
+            'father_name'     => $fatherName,
+            'nationality'     => $extractedJson['nationality'] ?? $extractedJson['country_code'] ?? null,
             'issuing_country' => $extractedJson['issuing_country'] ?? null,
-            'country_code' => $extractedJson['country_code'] ?? null,
-            'date_of_birth' => $dob,
-            'gender' => $extractedJson['gender'] ?? null,
-            'place_of_birth' => $extractedJson['place_of_birth'] ?? null,
-            'authority' => $extractedJson['authority'] ?? null,
-            'date_of_issue' => $issueDate,
-            'date_of_expiry' => $expiryDate,
-            'mrz_line1' => $extractedJson['mrz_line1'] ?? null,
-            'mrz_line2' => $extractedJson['mrz_line2'] ?? null,
-            'notes' => $notes,
-            'scan_method' => 'GEMINI_API',
-            'method_label' => 'Google Gemini Vision API',
+            'country_code'    => $extractedJson['country_code'] ?? null,
+            'date_of_birth'   => $dob,
+            'gender'          => $extractedJson['gender'] ?? null,
+            'place_of_birth'  => $placeOfBirth,
+            'town'            => $town,
+            'authority'       => $extractedJson['authority'] ?? null,
+            'date_of_issue'   => $issueDate,
+            'date_of_expiry'  => $expiryDate,
+            'mrz_line1'       => $extractedJson['mrz_line1'] ?? null,
+            'mrz_line2'       => $extractedJson['mrz_line2'] ?? null,
+            'notes'           => $notes,
+            'scan_method'     => 'GEMINI_API',
+            'method_label'    => 'Google Gemini Vision API',
         ];
 
         return response()->json([
@@ -349,5 +374,57 @@ PROMPT;
         } catch (Exception) {
             return null;
         }
+    }
+
+    /**
+     * Safely normalize name from SURNAME, GIVEN_NAMES to GIVEN_NAMES SURNAME.
+     */
+    protected function normalizePersonNameSafe(?string $name, ?string $candidateSurname = null): ?string
+    {
+        if ($name === null) {
+            return null;
+        }
+        $cleaned = trim(preg_replace('/\s+/', ' ', str_replace(["\r", "\n"], ' ', $name)));
+        if ($cleaned === '') {
+            return null;
+        }
+
+        // Strip leading/trailing PAK/PAKISTAN
+        $cleaned = preg_replace('/^PAK\s+/i', '', $cleaned);
+        $cleaned = preg_replace('/[,\\/\\-\\s]+\\b(PAK|PAKISTAN|PAKISTANI)\\b$/i', '', $cleaned);
+        $cleaned = trim($cleaned);
+
+        if ($cleaned === '') {
+            return null;
+        }
+
+        if (str_contains($cleaned, ',')) {
+            $parts = array_values(array_filter(
+                array_map('trim', explode(',', $cleaned)),
+                fn ($p) => $p !== '' && !preg_match('/^(PAK|PAKISTAN|PAKISTANI)$/i', $p)
+            ));
+
+            if (count($parts) === 2) {
+                return trim($parts[1] . ' ' . $parts[0]);
+            }
+            if (count($parts) === 1) {
+                return $parts[0];
+            }
+        }
+
+        // If no comma, check if second word is the candidate's surname (e.g. "MEHMOOD ARSHAD" when candidate surname is "ARSHAD")
+        if (!empty($candidateSurname)) {
+            $sName = strtoupper(trim((string) $candidateSurname));
+            $words = array_values(array_filter(preg_split('/\s+/', $cleaned)));
+            if (count($words) === 2) {
+                $w1 = strtoupper($words[0]);
+                $w2 = strtoupper($words[1]);
+                if ($w2 === $sName && $w1 !== $sName) {
+                    return trim($words[1] . ' ' . $words[0]);
+                }
+            }
+        }
+
+        return $cleaned;
     }
 }

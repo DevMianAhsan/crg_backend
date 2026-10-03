@@ -14,6 +14,10 @@ class LedgerController extends Controller
 
         $query = LedgerEntry::query()
             ->with(['candidate:id,first_name,last_name,code', 'company:id,name'])
+            ->where(function ($q): void {
+                $q->whereNull('candidate_id')
+                  ->orWhereHas('candidate');
+            })
             ->latest('date')
             ->latest('id');
 
