@@ -48,7 +48,6 @@ class Candidate extends Model
         'date_of_birth',
         'civil_status',
         'children_count',
-        'former_name',
         'citizenship',
         'town',
         'country',
