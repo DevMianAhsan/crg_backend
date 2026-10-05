@@ -347,12 +347,13 @@ PROMPT;
         $fatherName = $this->normalizePersonNameSafe($extractedJson['father_name'] ?? null, $extractedJson['surname'] ?? null);
 
         // Process Wife / Spouse details for FRC
-        $wifeDetails = $this->formatWifeDetailsSafe($extractedJson['wife_details'] ?? null);
+        $isFrc = str_contains($rawDocType, 'frc') || str_contains($rawDocType, 'family');
+        $wifeDetails = $isFrc ? $this->formatWifeDetailsSafe($extractedJson['wife_details'] ?? null) : null;
 
         // Process Children details for FRC
-        $childrenDetails = $this->formatChildrenDetailsSafe($extractedJson['children_details'] ?? null);
-        $childrenCount = $extractedJson['children_count'] ?? null;
-        if (empty($childrenCount) && !empty($childrenDetails)) {
+        $childrenDetails = $isFrc ? $this->formatChildrenDetailsSafe($extractedJson['children_details'] ?? null) : [];
+        $childrenCount = $isFrc ? ($extractedJson['children_count'] ?? null) : null;
+        if ($isFrc && empty($childrenCount) && !empty($childrenDetails)) {
             $childrenCount = (string) count($childrenDetails);
         }
 
@@ -372,7 +373,7 @@ PROMPT;
             'gender'           => $extractedJson['gender'] ?? null,
             'place_of_birth'   => $placeOfBirth,
             'town'             => $town,
-            'address'          => $this->cleanAddressSafe($extractedJson['address'] ?? null),
+            'address'          => $isCharacterCert ? $this->cleanAddressSafe($extractedJson['address'] ?? null) : null,
             'authority'        => $extractedJson['authority'] ?? null,
             'date_of_issue'    => $issueDate,
             'date_of_expiry'   => $expiryDate,
