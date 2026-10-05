@@ -111,7 +111,35 @@ CRITICAL RULES FOR PAKISTANI PASSPORTS:
    - Extract the certificate reference number (e.g. FSD-12765678, CKW-4755780). DO NOT use the applicant's passport number mentioned in the text.
    - In Pakistan, Police Character Certificates are valid for exactly 180 days (6 months) from the date of issue. The date_of_expiry MUST be exactly 180 days after date_of_issue.
    - If a CNIC / National ID is present on the certificate, also populate "cnic" with it (XXXXX-XXXXXXX-X).
-3. Other documents:
+   - CRITICAL FOR ADDRESS: Police character certificates contain the candidate's complete residential address under the "Address" / "Place & Period of Stay" section (e.g. "Permanent: VPO THANEEL KAMAL, TEH & DISTT CHAKWAL" or "Present: ..."). Extract this complete address into the "address" field (e.g. "VPO THANEEL KAMAL, TEH & DISTT CHAKWAL"). Strip leading prefixes like "Permanent:" or "Present:" and return the clean full address.
+3. For NADRA Family Registration Certificate (FRC / Family Certificate):
+   - Set "document_type" to "FRC".
+   - Extract the FRC Certificate Tracking Number / Document Number into "document_number".
+   - Extract the Date of Issue into "date_of_issue".
+   - Identify all family members in the table/list:
+     * If Wife / Spouse is listed (Relation: "Wife" / "Spouse" / "Zowja"):
+       Extract "wife_details" as an object:
+       {
+         "name": Given name / First name (e.g. "FATIMA" or "MARIA"),
+         "surname": Surname / Last name (e.g. "BIBI" or "UMAIR"),
+         "date_of_birth": "YYYY-MM-DD" (if date of birth is listed),
+         "age": age as integer or string (if listed or calculated),
+         "cnic": 13-digit CNIC (XXXXX-XXXXXXX-X)
+       }
+     * Extract all Children (Relation: "Son" / "Daughter" / "Child" / "Beta" / "Beti"):
+       Extract "children_details" as an array of objects:
+       [
+         {
+           "name": Given / First name,
+           "surname": Surname / Last name,
+           "date_of_birth": "YYYY-MM-DD" (if date of birth is listed),
+           "age": age as integer or string (if listed or calculated),
+           "gender": "Male" or "Female",
+           "cnic": 13-digit CNIC or B-Form / CRC number
+         }
+       ]
+     * Set "children_count": Total number of children found as string (e.g. "2").
+4. Other documents:
    - CNIC / National Identity Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date): populate BOTH "document_number" and "cnic" with the 13-digit number.
    - Medical Fitness Certificate / GAMCA (with report/slip number, test date, expiry date)
    - Driving License (with license number, issue date, expiry date)
@@ -120,11 +148,11 @@ CRITICAL RULES FOR PAKISTANI PASSPORTS:
 
 Extract all visible details and return ONLY a valid JSON object with this exact structure:
 {
-  "document_type": string (e.g. "Passport", "CNIC / National Identity Card", "Character Certificate / Police Clearance", "Medical Fitness Certificate", "Driving License", "Trade Skill Certificate", "Visa", or "Compliance Document"),
-  "title": string (suggested concise title e.g. "Passport - DANIEL CAMPBELL", "CNIC Card - MUHAMMAD UMAIR", "Police Character Certificate", or "GAMCA Medical Fitness"),
+  "document_type": string (e.g. "Passport", "FRC", "CNIC / National Identity Card", "Character Certificate / Police Clearance", "Medical Fitness Certificate", "Driving License", "Trade Skill Certificate", "Visa", or "Compliance Document"),
+  "title": string (suggested concise title e.g. "Passport - DANIEL CAMPBELL", "FRC - MUHAMMAD UMAIR", "CNIC Card - MUHAMMAD UMAIR", "Police Character Certificate", or "GAMCA Medical Fitness"),
   "issuing_country": string or null (Full official country title, e.g. "Pakistan" or "United Kingdom"),
   "country_code": string or null (3-letter ISO code, e.g. "PAK", "GBR"),
-  "document_number": string or null (The main number: passport number, CNIC identity number, certificate reference number, or license number),
+  "document_number": string or null (The main number: passport number, FRC certificate tracking number, CNIC identity number, certificate reference number, or license number),
   "passport_series": string or null (The alphabet prefix series like "SD", "JA", "ST"),
   "cnic": string or null (13-digit Pakistani National ID / CNIC formatted as 00000-0000000-0),
   "surname": string or null (Last name),
@@ -135,9 +163,28 @@ Extract all visible details and return ONLY a valid JSON object with this exact 
   "gender": string or null ("M", "F", or "X"),
   "place_of_birth": string or null (e.g. "FAISALABAD", "LAHORE"),
   "town": string or null (Town / City of origin e.g. "FAISALABAD"),
+  "address": string or null (The complete residential/permanent address extracted from Character Certificate / Police clearance or identity document, e.g. "VPO THANEEL KAMAL, TEH & DISTT CHAKWAL"),
   "authority": string or null (e.g. "NADRA", "Islamabad Police", "Punjab Police", "HMPO", "Ministry of Health", "GAMCA"),
   "date_of_issue": string or null ("YYYY-MM-DD" format),
   "date_of_expiry": string or null ("YYYY-MM-DD" format),
+  "wife_details": {
+    "name": string or null,
+    "surname": string or null,
+    "date_of_birth": string or null ("YYYY-MM-DD"),
+    "age": string or number or null,
+    "cnic": string or null
+  } or null,
+  "children_details": [
+    {
+      "name": string,
+      "surname": string or null,
+      "date_of_birth": string or null ("YYYY-MM-DD"),
+      "age": string or number or null,
+      "gender": string or null,
+      "cnic": string or null
+    }
+  ] or [],
+  "children_count": string or number or null,
   "mrz_line1": string or null (Bottom MRZ first line if passport),
   "mrz_line2": string or null (Bottom MRZ second line if passport),
   "notes": string or null (Concise verification summary remarks, e.g. "Doc No: 35202-1234567-1 | Issued by: NADRA | Expiry: 2032-05-10")
@@ -299,30 +346,44 @@ PROMPT;
 
         $fatherName = $this->normalizePersonNameSafe($extractedJson['father_name'] ?? null, $extractedJson['surname'] ?? null);
 
+        // Process Wife / Spouse details for FRC
+        $wifeDetails = $this->formatWifeDetailsSafe($extractedJson['wife_details'] ?? null);
+
+        // Process Children details for FRC
+        $childrenDetails = $this->formatChildrenDetailsSafe($extractedJson['children_details'] ?? null);
+        $childrenCount = $extractedJson['children_count'] ?? null;
+        if (empty($childrenCount) && !empty($childrenDetails)) {
+            $childrenCount = (string) count($childrenDetails);
+        }
+
         $formattedData = [
-            'document_type'   => $extractedJson['document_type'] ?? 'Passport',
-            'title'           => $title,
-            'document_number' => $docNum,
-            'passport_series' => $passportSeries,
-            'cnic'            => $cnic,
-            'surname'         => $extractedJson['surname'] ?? null,
-            'given_names'     => $extractedJson['given_names'] ?? null,
-            'father_name'     => $fatherName,
-            'nationality'     => $extractedJson['nationality'] ?? $extractedJson['country_code'] ?? null,
-            'issuing_country' => $extractedJson['issuing_country'] ?? null,
-            'country_code'    => $extractedJson['country_code'] ?? null,
-            'date_of_birth'   => $dob,
-            'gender'          => $extractedJson['gender'] ?? null,
-            'place_of_birth'  => $placeOfBirth,
-            'town'            => $town,
-            'authority'       => $extractedJson['authority'] ?? null,
-            'date_of_issue'   => $issueDate,
-            'date_of_expiry'  => $expiryDate,
-            'mrz_line1'       => $extractedJson['mrz_line1'] ?? null,
-            'mrz_line2'       => $extractedJson['mrz_line2'] ?? null,
-            'notes'           => $notes,
-            'scan_method'     => 'GEMINI_API',
-            'method_label'    => 'Google Gemini Vision API',
+            'document_type'    => $extractedJson['document_type'] ?? 'Passport',
+            'title'            => $title,
+            'document_number'  => $docNum,
+            'passport_series'  => $passportSeries,
+            'cnic'             => $cnic,
+            'surname'          => $extractedJson['surname'] ?? null,
+            'given_names'      => $extractedJson['given_names'] ?? null,
+            'father_name'      => $fatherName,
+            'nationality'      => $extractedJson['nationality'] ?? $extractedJson['country_code'] ?? null,
+            'issuing_country'  => $extractedJson['issuing_country'] ?? null,
+            'country_code'     => $extractedJson['country_code'] ?? null,
+            'date_of_birth'    => $dob,
+            'gender'           => $extractedJson['gender'] ?? null,
+            'place_of_birth'   => $placeOfBirth,
+            'town'             => $town,
+            'address'          => $this->cleanAddressSafe($extractedJson['address'] ?? null),
+            'authority'        => $extractedJson['authority'] ?? null,
+            'date_of_issue'    => $issueDate,
+            'date_of_expiry'   => $expiryDate,
+            'wife_details'     => $wifeDetails,
+            'children_details' => $childrenDetails,
+            'children_count'   => $childrenCount,
+            'mrz_line1'        => $extractedJson['mrz_line1'] ?? null,
+            'mrz_line2'        => $extractedJson['mrz_line2'] ?? null,
+            'notes'            => $notes,
+            'scan_method'      => 'GEMINI_API',
+            'method_label'     => 'Google Gemini Vision API',
         ];
 
         return response()->json([
@@ -332,6 +393,86 @@ PROMPT;
             'method_label' => 'Google Gemini Vision API',
             'data' => $formattedData,
         ]);
+    }
+
+    /**
+     * Safely format Wife / Spouse details object.
+     */
+    protected function formatWifeDetailsSafe(mixed $wife): ?array
+    {
+        if (!is_array($wife) || empty($wife)) {
+            return null;
+        }
+
+        $name = trim((string) ($wife['name'] ?? $wife['given_names'] ?? $wife['first_name'] ?? ''));
+        $surname = trim((string) ($wife['surname'] ?? $wife['last_name'] ?? ''));
+        $dob = $this->formatDateSafe($wife['date_of_birth'] ?? $wife['dob'] ?? null);
+        $age = $wife['age'] ?? null;
+
+        if ($dob && (empty($age) || !is_numeric($age))) {
+            try {
+                $age = (string) Carbon::parse($dob)->age;
+            } catch (Exception) {
+                // Keep original
+            }
+        }
+
+        if (empty($name) && empty($surname) && empty($dob) && empty($age)) {
+            return null;
+        }
+
+        return [
+            'name'        => $name ?: null,
+            'surname'     => $surname ?: null,
+            'dateOfBirth' => $dob ?: null,
+            'age'         => $age !== null && $age !== '' ? (string) $age : null,
+            'cnic'        => $this->formatCnicSafe($wife['cnic'] ?? null),
+        ];
+    }
+
+    /**
+     * Safely format Children details array.
+     */
+    protected function formatChildrenDetailsSafe(mixed $children): ?array
+    {
+        if (!is_array($children) || empty($children)) {
+            return null;
+        }
+
+        $formattedList = [];
+        foreach ($children as $child) {
+            if (!is_array($child)) {
+                continue;
+            }
+
+            $name = trim((string) ($child['name'] ?? $child['given_names'] ?? $child['first_name'] ?? ''));
+            $surname = trim((string) ($child['surname'] ?? $child['last_name'] ?? ''));
+            $dob = $this->formatDateSafe($child['date_of_birth'] ?? $child['dob'] ?? null);
+            $age = $child['age'] ?? null;
+
+            if ($dob && (empty($age) || !is_numeric($age))) {
+                try {
+                    $age = (string) Carbon::parse($dob)->age;
+                } catch (Exception) {
+                    // Keep original
+                }
+            }
+
+            if (empty($name) && empty($surname) && empty($dob) && empty($age)) {
+                continue;
+            }
+
+            $formattedList[] = [
+                'name'        => $name ?: null,
+                'surname'     => $surname ?: null,
+                'dateOfBirth' => $dob ?: null,
+                'age'         => $age !== null && $age !== '' ? (string) $age : null,
+                'gender'      => $child['gender'] ?? null,
+                'cnic'        => $this->formatCnicSafe($child['cnic'] ?? null),
+            ];
+        }
+
+        return !empty($formattedList) ? $formattedList : null;
     }
 
     /**
@@ -423,6 +564,27 @@ PROMPT;
                     return trim($words[1] . ' ' . $words[0]);
                 }
             }
+        }
+
+        return $cleaned;
+    }
+
+    /**
+     * Safely clean and normalize physical / residential address.
+     */
+    protected function cleanAddressSafe(mixed $addr): ?string
+    {
+        if (!$addr || !is_string($addr)) {
+            return null;
+        }
+
+        $cleaned = trim($addr);
+        // Remove leading Permanent: / Present: / Address:
+        $cleaned = preg_replace('/^(?:permanent|present|residential|current)?\s*(?:address)?\s*[:\-\.]\s*/i', '', $cleaned);
+        $cleaned = trim(preg_replace('/\s+/', ' ', str_replace(["\r", "\n"], ' ', $cleaned)));
+
+        if (strlen($cleaned) < 4 || preg_replace('/[^a-zA-Z0-9]/', '', $cleaned) === '') {
+            return null;
         }
 
         return $cleaned;

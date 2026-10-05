@@ -187,8 +187,10 @@ class CandidateController extends Controller
             'cnicNumber'       => ['required', 'string', 'max:20'],
             'nationality'      => ['nullable', 'string', 'max:100'],
             'currentLocation'  => ['nullable', 'string', 'max:200'],
+            'address'          => ['nullable', 'string', 'max:500'],
             'targetCountry'    => ['nullable', 'string', 'max:200'],
-            'trade'            => ['required', 'string', 'max:255'],
+            'joinedDate'       => ['nullable', 'date'],
+            'trade'            => ['nullable', 'string', 'max:255'],
             'experienceYears'  => ['nullable', 'integer', 'min:0'],
             'balance'          => ['nullable', 'numeric', 'min:0'],
             'serviceCharges'   => ['nullable', 'numeric', 'min:0'],
@@ -200,9 +202,11 @@ class CandidateController extends Controller
             'placeOfBirth'     => ['nullable', 'string', 'max:150'],
             'dateOfBirth'      => ['nullable', 'date'],
             'civilStatus'      => ['nullable', 'string', 'max:50'],
+            'wifeDetails'      => ['nullable'],
+            'wife_details'     => ['nullable'],
             'childrenCount'    => ['nullable', 'string', 'max:20'],
+            'childrenDetails'  => ['nullable'],
             'passportSeries'   => ['nullable', 'string', 'max:50'],
-            'passportIssuedBy' => ['nullable', 'string', 'max:150'],
             'citizenship'      => ['nullable', 'string', 'max:100'],
             'town'             => ['nullable', 'string', 'max:150'],
             'country'          => ['nullable', 'string', 'max:100'],
@@ -213,6 +217,10 @@ class CandidateController extends Controller
             'currentJob'       => ['nullable', 'string', 'max:150'],
             'qualification'    => ['nullable', 'string', 'max:150'],
             'notes'            => ['nullable', 'string'],
+            'embassyDetails'   => ['nullable'],
+            'embassy_details'  => ['nullable'],
+            'foreignVisit'     => ['nullable'],
+            'foreign_visit'    => ['nullable'],
         ]);
 
         // Enforce unique passport number across all active candidates & historical passports
@@ -270,6 +278,24 @@ class CandidateController extends Controller
         $town = $data['town'] ?? $placeOfBirth ?? $data['currentLocation'] ?? null;
         $currentLocation = $data['currentLocation'] ?? $placeOfBirth ?? $town ?? null;
 
+        $childrenDetails = $request->input('childrenDetails');
+        if (is_string($childrenDetails)) {
+            $decoded = json_decode($childrenDetails, true);
+            $childrenDetails = is_array($decoded) ? $decoded : null;
+        }
+
+        $wifeDetails = $request->input('wifeDetails') ?? $request->input('wife_details');
+        if (is_string($wifeDetails)) {
+            $decoded = json_decode($wifeDetails, true);
+            $wifeDetails = is_array($decoded) ? $decoded : null;
+        }
+
+        $embassyDetails = $request->input('embassyDetails') ?? $request->input('embassy_details');
+        if (is_string($embassyDetails)) {
+            $decoded = json_decode($embassyDetails, true);
+            $embassyDetails = is_array($decoded) ? $decoded : null;
+        }
+
         $candidate = Candidate::create([
             'code'               => $code,
             'psn_code'           => $psnCode,
@@ -283,8 +309,9 @@ class CandidateController extends Controller
             'cnic_number'        => $data['cnicNumber'] ?? null,
             'nationality'        => !empty($data['nationality']) ? $data['nationality'] : null,
             'current_location'   => !empty($currentLocation) ? $currentLocation : null,
+            'address'            => $data['address'] ?? null,
             'target_country'     => $data['targetCountry'] ?? null,
-            'trade'              => $data['trade'],
+            'trade'              => $data['trade'] ?? null,
             'experience_years'   => $data['experienceYears'] ?? 0,
             'photo_path'         => null,
             'signature_path'     => null,
@@ -292,15 +319,17 @@ class CandidateController extends Controller
             'recruitment_stage'  => 'registered',
             'skills'             => $skills ?? [],
             'service_charges'    => $serviceCharges,
-            'joined_date'        => now()->toDateString(),
+            'joined_date'        => $data['joinedDate'] ?? now()->toDateString(),
             'father_name'        => $fatherName,
             'mother_name'        => $data['motherName'] ?? null,
+            'placeOfBirth'       => $placeOfBirth,
             'place_of_birth'     => $placeOfBirth,
             'date_of_birth'      => $data['dateOfBirth'] ?? null,
             'civil_status'       => $data['civilStatus'] ?? null,
+            'wife_details'       => $wifeDetails,
             'children_count'     => $data['childrenCount'] ?? null,
+            'children_details'   => $childrenDetails,
             'passport_series'    => $passportSeries,
-            'passport_issued_by' => $data['passportIssuedBy'] ?? null,
             'citizenship'        => $data['citizenship'] ?? null,
             'town'               => $town,
             'country'            => $data['country'] ?? null,
@@ -311,6 +340,8 @@ class CandidateController extends Controller
             'current_job'        => $data['currentJob'] ?? null,
             'qualification'      => $data['qualification'] ?? null,
             'notes'              => $data['notes'] ?? null,
+            'embassy_details'    => $embassyDetails,
+            'foreign_visit'      => is_array($data['foreignVisit'] ?? $data['foreign_visit'] ?? null) ? json_encode($data['foreignVisit'] ?? $data['foreign_visit']) : ($data['foreignVisit'] ?? $data['foreign_visit'] ?? null),
         ]);
 
         // Handle photo upload directly inside candidate folder
@@ -751,10 +782,44 @@ class CandidateController extends Controller
                 'category' => 'Personal Information',
                 'resolver' => fn ($c) => ucfirst($c->civil_status ?? ''),
             ],
+            'wife_details' => [
+                'label'    => 'Wife / Spouse Details',
+                'category' => 'Personal Information',
+                'resolver' => function ($c) {
+                    $w = $c->wife_details;
+                    if (!is_array($w) || empty($w)) return '';
+                    $parts = array_filter([
+                        !empty($w['name']) ? "Name: {$w['name']}" : null,
+                        !empty($w['surname']) ? "Surname: {$w['surname']}" : null,
+                        !empty($w['dateOfBirth']) ? "DOB: {$w['dateOfBirth']}" : null,
+                        !empty($w['age']) ? "Age: {$w['age']}" : null,
+                    ]);
+                    return implode(', ', $parts);
+                },
+            ],
             'children_count' => [
                 'label'    => 'Children Count',
                 'category' => 'Personal Information',
                 'resolver' => fn ($c) => $c->children_count ?? '',
+            ],
+            'children_details' => [
+                'label'    => 'Children Details',
+                'category' => 'Personal Information',
+                'resolver' => function ($c) {
+                    $cd = $c->children_details;
+                    if (!is_array($cd) || empty($cd)) return '';
+                    $list = [];
+                    foreach ($cd as $idx => $child) {
+                        $parts = array_filter([
+                            !empty($child['name']) ? $child['name'] : 'Child #' . ($idx + 1),
+                            !empty($child['surname']) ? $child['surname'] : null,
+                            !empty($child['dateOfBirth']) ? 'DOB: ' . $child['dateOfBirth'] : null,
+                            !empty($child['age']) ? "{$child['age']} yrs" : null,
+                        ]);
+                        $list[] = implode(' ', $parts);
+                    }
+                    return implode('; ', $list);
+                },
             ],
             'license' => [
                 'label'    => 'License',
@@ -783,11 +848,6 @@ class CandidateController extends Controller
                 'category' => 'Passport & Identity',
                 'resolver' => fn ($c) => $c->passport_series ?? '',
             ],
-            'passport_issued_by' => [
-                'label'    => 'Passport Issued By',
-                'category' => 'Passport & Identity',
-                'resolver' => fn ($c) => $c->passport_issued_by ?? '',
-            ],
             'cnic_number' => [
                 'label'    => 'CNIC / Identity Number',
                 'category' => 'Passport & Identity',
@@ -802,6 +862,11 @@ class CandidateController extends Controller
                 'label'    => 'Citizenship',
                 'category' => 'Passport & Identity',
                 'resolver' => fn ($c) => $c->citizenship ?? '',
+            ],
+            'foreign_visit' => [
+                'label'    => 'Any Foreign Visit / Travel History',
+                'category' => 'Passport & Identity',
+                'resolver' => fn ($c) => $c->foreign_visit ?? '',
             ],
 
             // Contact & Location
@@ -1446,7 +1511,9 @@ class CandidateController extends Controller
             'cnicNumber'       => ['nullable', 'string', 'max:20'],
             'nationality'      => ['nullable', 'string', 'max:100'],
             'currentLocation'  => ['nullable', 'string', 'max:200'],
+            'address'          => ['nullable', 'string', 'max:500'],
             'targetCountry'    => ['nullable', 'string', 'max:200'],
+            'joinedDate'       => ['nullable', 'date'],
             'trade'            => ['nullable', 'string', 'max:255'],
             'experienceYears'  => ['nullable', 'integer', 'min:0'],
             'balance'          => ['nullable', 'numeric', 'min:0'],
@@ -1458,9 +1525,11 @@ class CandidateController extends Controller
             'placeOfBirth'     => ['nullable', 'string', 'max:150'],
             'dateOfBirth'      => ['nullable', 'date'],
             'civilStatus'      => ['nullable', 'string', 'max:50'],
+            'wifeDetails'      => ['nullable'],
+            'wife_details'     => ['nullable'],
             'childrenCount'    => ['nullable', 'string', 'max:20'],
+            'childrenDetails'  => ['nullable'],
             'passportSeries'   => ['nullable', 'string', 'max:50'],
-            'passportIssuedBy' => ['nullable', 'string', 'max:150'],
             'citizenship'      => ['nullable', 'string', 'max:100'],
             'town'             => ['nullable', 'string', 'max:150'],
             'country'          => ['nullable', 'string', 'max:100'],
@@ -1473,6 +1542,10 @@ class CandidateController extends Controller
             'currentJob'       => ['nullable', 'string', 'max:150'],
             'qualification'    => ['nullable', 'string', 'max:150'],
             'notes'            => ['nullable', 'string'],
+            'embassyDetails'   => ['nullable'],
+            'embassy_details'  => ['nullable'],
+            'foreignVisit'     => ['nullable'],
+            'foreign_visit'    => ['nullable'],
         ]);
 
         // Enforce unique passport number across all candidates (active and history, excluding self)
@@ -1576,6 +1649,39 @@ class CandidateController extends Controller
                 ? $data['service_charges']
                 : (array_key_exists('balance', $data) ? $data['balance'] : $candidate->service_charges));
 
+        $childrenDetails = $candidate->children_details;
+        if ($request->has('childrenDetails')) {
+            $rawChildren = $request->input('childrenDetails');
+            if (is_string($rawChildren)) {
+                $decoded = json_decode($rawChildren, true);
+                $childrenDetails = is_array($decoded) ? $decoded : null;
+            } else {
+                $childrenDetails = $rawChildren;
+            }
+        }
+
+        $wifeDetails = $candidate->wife_details;
+        if ($request->has('wifeDetails') || $request->has('wife_details')) {
+            $rawWife = $request->input('wifeDetails') ?? $request->input('wife_details');
+            if (is_string($rawWife)) {
+                $decoded = json_decode($rawWife, true);
+                $wifeDetails = is_array($decoded) ? $decoded : null;
+            } else {
+                $wifeDetails = $rawWife;
+            }
+        }
+
+        $embassyDetails = $candidate->embassy_details;
+        if ($request->has('embassyDetails') || $request->has('embassy_details')) {
+            $rawEmbassy = $request->input('embassyDetails') ?? $request->input('embassy_details');
+            if (is_string($rawEmbassy)) {
+                $decoded = json_decode($rawEmbassy, true);
+                $embassyDetails = is_array($decoded) ? $decoded : null;
+            } else {
+                $embassyDetails = $rawEmbassy;
+            }
+        }
+
         $candidate->forceFill([
             'first_name'         => $data['firstName'],
             'last_name'          => array_key_exists('lastName', $data) ? $data['lastName'] : $candidate->last_name,
@@ -1587,7 +1693,9 @@ class CandidateController extends Controller
             'cnic_number'        => $data['cnicNumber'] ?? null,
             'nationality'        => $data['nationality'] ?? 'Pakistani',
             'current_location'   => $data['currentLocation'] ?? 'Pakistan',
+            'address'            => array_key_exists('address', $data) ? $data['address'] : $candidate->address,
             'target_country'     => $data['targetCountry'] ?? null,
+            'joined_date'        => array_key_exists('joinedDate', $data) ? $data['joinedDate'] : $candidate->joined_date,
             'trade'              => $tradeValue,
             'experience_years'   => $data['experienceYears'] ?? 0,
             'service_charges'    => $serviceCharges ?? 0,
@@ -1599,9 +1707,10 @@ class CandidateController extends Controller
             'place_of_birth'     => array_key_exists('placeOfBirth', $data) ? $data['placeOfBirth'] : $candidate->place_of_birth,
             'date_of_birth'      => $dob,
             'civil_status'       => array_key_exists('civilStatus', $data) ? $data['civilStatus'] : $candidate->civil_status,
+            'wife_details'       => $wifeDetails,
             'children_count'     => array_key_exists('childrenCount', $data) ? $data['childrenCount'] : $candidate->children_count,
+            'children_details'   => $childrenDetails,
             'passport_series'    => array_key_exists('passportSeries', $data) ? $data['passportSeries'] : $candidate->passport_series,
-            'passport_issued_by' => array_key_exists('passportIssuedBy', $data) ? $data['passportIssuedBy'] : $candidate->passport_issued_by,
             'citizenship'        => array_key_exists('citizenship', $data) ? $data['citizenship'] : $candidate->citizenship,
             'town'               => array_key_exists('town', $data) ? $data['town'] : $candidate->town,
             'country'            => array_key_exists('country', $data) ? $data['country'] : $candidate->country,
@@ -1614,6 +1723,12 @@ class CandidateController extends Controller
             'current_job'        => array_key_exists('currentJob', $data) ? $data['currentJob'] : $candidate->current_job,
             'qualification'      => array_key_exists('qualification', $data) ? $data['qualification'] : $candidate->qualification,
             'notes'              => array_key_exists('notes', $data) ? $data['notes'] : $candidate->notes,
+            'embassy_details'    => $embassyDetails,
+            'foreign_visit'      => array_key_exists('foreignVisit', $data)
+                ? (is_array($data['foreignVisit']) ? json_encode($data['foreignVisit']) : $data['foreignVisit'])
+                : (array_key_exists('foreign_visit', $data)
+                    ? (is_array($data['foreign_visit']) ? json_encode($data['foreign_visit']) : $data['foreign_visit'])
+                    : $candidate->foreign_visit),
         ]);
         $candidate->saveOrFail();
         $savedCandidate = Candidate::with(['company', 'documents', 'submissions', 'withdrawal'])
@@ -1641,7 +1756,6 @@ class CandidateController extends Controller
             'passportExpiry'    => ['sometimes', 'nullable', 'date'],
             'passportIssueDate' => ['sometimes', 'nullable', 'date'],
             'passportSeries'    => ['sometimes', 'nullable', 'string', 'max:50'],
-            'passportIssuedBy'  => ['sometimes', 'nullable', 'string', 'max:150'],
             'cnicNumber'        => ['sometimes', 'nullable', 'string', 'max:20'],
             'nationality'       => ['sometimes', 'nullable', 'string', 'max:100'],
             'citizenship'       => ['sometimes', 'nullable', 'string', 'max:100'],
@@ -1662,14 +1776,20 @@ class CandidateController extends Controller
             'placeOfBirth'      => ['sometimes', 'nullable', 'string', 'max:150'],
             'civilStatus'       => ['sometimes', 'nullable', 'string', 'max:50'],
             'childrenCount'     => ['sometimes', 'nullable', 'string', 'max:20'],
+            'wifeDetails'       => ['sometimes', 'nullable'],
+            'wife_details'      => ['sometimes', 'nullable'],
+            'childrenDetails'   => ['sometimes', 'nullable'],
+            'children_details'  => ['sometimes', 'nullable'],
             'license'           => ['sometimes', 'nullable', 'string', 'max:150'],
+            'foreignVisit'      => ['sometimes', 'nullable'],
+            'foreign_visit'     => ['sometimes', 'nullable'],
         ];
         $data = $request->validate($rules);
 
         $columns = [
             'firstName' => 'first_name', 'lastName' => 'last_name', 'email' => 'email', 'phone' => 'phone',
             'passportExpiry' => 'passport_expiry', 'passportIssueDate' => 'passport_issue_date',
-            'passportSeries' => 'passport_series', 'passportIssuedBy' => 'passport_issued_by',
+            'passportSeries' => 'passport_series',
             'cnicNumber' => 'cnic_number', 'nationality' => 'nationality', 'citizenship' => 'citizenship',
             'currentLocation' => 'current_location', 'town' => 'town', 'country' => 'country',
             'targetCountry' => 'target_country', 'trade' => 'trade',
@@ -1679,12 +1799,41 @@ class CandidateController extends Controller
             'careOf' => 'care_of', 'dateOfBirth' => 'date_of_birth', 'age' => 'age',
             'placeOfBirth' => 'place_of_birth', 'civilStatus' => 'civil_status',
             'childrenCount' => 'children_count', 'license' => 'license',
+            'foreignVisit' => 'foreign_visit', 'foreign_visit' => 'foreign_visit',
         ];
 
         $updates = [];
         foreach ($data as $key => $value) {
-            $updates[$columns[$key]] = is_string($value) ? trim($value) : $value;
+            if (isset($columns[$key])) {
+                $col = $columns[$key];
+                if ($col === 'foreign_visit' && is_array($value)) {
+                    $updates[$col] = json_encode($value);
+                } else {
+                    $updates[$col] = is_string($value) ? trim($value) : $value;
+                }
+            }
         }
+
+        if ($request->has('wifeDetails') || $request->has('wife_details')) {
+            $rawWife = $request->input('wifeDetails') ?? $request->input('wife_details');
+            if (is_string($rawWife)) {
+                $decoded = json_decode($rawWife, true);
+                $updates['wife_details'] = is_array($decoded) ? $decoded : null;
+            } else {
+                $updates['wife_details'] = $rawWife;
+            }
+        }
+
+        if ($request->has('childrenDetails') || $request->has('children_details')) {
+            $rawChildren = $request->input('childrenDetails') ?? $request->input('children_details');
+            if (is_string($rawChildren)) {
+                $decoded = json_decode($rawChildren, true);
+                $updates['children_details'] = is_array($decoded) ? $decoded : null;
+            } else {
+                $updates['children_details'] = $rawChildren;
+            }
+        }
+
         if ($updates) {
             $candidate->forceFill($updates)->saveOrFail();
         }
@@ -2217,7 +2366,6 @@ class CandidateController extends Controller
             'passport_number',
             'passport_issue_date',
             'passport_expiry',
-            'passport_issued_by',
             'cnic_number',
             'phone',
             'email',
@@ -2359,8 +2507,8 @@ class CandidateController extends Controller
                 'cnicNumber'      => $candidate->cnic_number ?? '',
                 'passportNumber'  => $candidate->passport_number ?? '',
                 'passportExpiry'  => $candidate->passport_expiry?->toDateString() ?? '',
-                'trade'           => $candidate->trade ?? 'General Worker',
-                'targetCountry'   => $candidate->target_country ?? 'Romania',
+                'trade'           => $candidate->trade ?? '',
+                'targetCountry'   => $candidate->target_country ?? '',
                 'currentLocation' => $candidate->current_location ?? '',
                 'nationality'     => $candidate->nationality ?? 'Pakistani',
                 'careOf'          => $candidate->care_of ?? '',
@@ -2652,6 +2800,7 @@ class CandidateController extends Controller
             'issueDate'        => ['nullable', 'date'],
             'expiryDate'       => ['nullable', 'date'],
             'notes'            => ['nullable', 'string'],
+            'address'          => ['nullable', 'string', 'max:500'],
         ]);
 
         $docTypeId = $data['documentTypeId'] ?? null;
@@ -2704,10 +2853,75 @@ class CandidateController extends Controller
             $candidate->update(['recruitment_stage' => 'docs_collection']);
         }
 
+        // If document is a work permit and issue date is provided, sync to candidate's embassy_details
+        $isPermitDoc = str_contains(strtolower($data['title'] ?? ''), 'permit')
+            || str_contains(strtolower($data['documentTypeName'] ?? ''), 'permit')
+            || ($docType && (str_contains(strtolower($docType->name ?? ''), 'permit') || str_contains(strtolower($docType->code ?? ''), 'permit')))
+            || (($data['documentTypeId'] ?? '') === '11');
+
+        if ($isPermitDoc && !empty($data['issueDate'])) {
+            $embassyDetails = is_array($candidate->embassy_details)
+                ? $candidate->embassy_details
+                : (json_decode($candidate->embassy_details ?? '{}', true) ?: []);
+            $embassyDetails['workPermitIssueDate'] = $data['issueDate'];
+            if (empty($embassyDetails['category'])) {
+                $embassyDetails['category'] = 'Work Permit';
+            }
+            $candidate->update(['embassy_details' => $embassyDetails]);
+        }
+
+        // If document is an FRC or wife/children details are provided, sync to candidate table
+        $candidateUpdates = [];
+
+        if ($request->has('wifeDetails') || $request->has('wife_details')) {
+            $rawWife = $request->input('wifeDetails') ?? $request->input('wife_details');
+            if (is_string($rawWife)) {
+                $decoded = json_decode($rawWife, true);
+                $candidateUpdates['wife_details'] = is_array($decoded) ? $decoded : null;
+            } else {
+                $candidateUpdates['wife_details'] = $rawWife;
+            }
+            if (!empty($candidateUpdates['wife_details'])) {
+                $candidateUpdates['civil_status'] = 'Married';
+            }
+        }
+
+        if ($request->has('childrenDetails') || $request->has('children_details')) {
+            $rawChildren = $request->input('childrenDetails') ?? $request->input('children_details');
+            if (is_string($rawChildren)) {
+                $decoded = json_decode($rawChildren, true);
+                $candidateUpdates['children_details'] = is_array($decoded) ? $decoded : null;
+            } else {
+                $candidateUpdates['children_details'] = $rawChildren;
+            }
+            if (!empty($candidateUpdates['children_details']) && !isset($candidateUpdates['civil_status'])) {
+                $candidateUpdates['civil_status'] = 'Married';
+            }
+        }
+
+        if ($request->has('childrenCount') || $request->has('children_count')) {
+            $candidateUpdates['children_count'] = (string) ($request->input('childrenCount') ?? $request->input('children_count'));
+        } elseif (!empty($candidateUpdates['children_details']) && is_array($candidateUpdates['children_details'])) {
+            $candidateUpdates['children_count'] = (string) count($candidateUpdates['children_details']);
+        }
+
+        // If candidate address is provided (e.g. from Character Certificate / Police Clearance), sync to candidate
+        if ($request->has('address') || $request->has('candidateAddress')) {
+            $addr = trim((string) ($request->input('address') ?? $request->input('candidateAddress') ?? ''));
+            if (!empty($addr)) {
+                $candidateUpdates['address'] = $addr;
+            }
+        }
+
+        if (!empty($candidateUpdates)) {
+            $candidate->update($candidateUpdates);
+        }
+
         $this->syncCandidateStatus($candidate);
 
         return response()->json([
-            'document' => $this->presentDocument($document),
+            'document'  => $this->presentDocument($document),
+            'candidate' => $this->presentDetail($candidate->fresh()->load(['company', 'documents', 'submissions', 'withdrawal'])),
         ], 201);
     }
 
@@ -2791,8 +3005,28 @@ class CandidateController extends Controller
 
         $document->update($updateData);
 
+        // If document is a work permit and issue date is provided/updated, sync to candidate's embassy_details
+        $isPermitDoc = str_contains(strtolower($document->title ?? ''), 'permit')
+            || str_contains(strtolower($data['title'] ?? ''), 'permit')
+            || str_contains(strtolower($document->document_type_name ?? ''), 'permit')
+            || str_contains(strtolower($data['documentTypeName'] ?? ''), 'permit')
+            || ($docType && (str_contains(strtolower($docType->name ?? ''), 'permit') || str_contains(strtolower($docType->code ?? ''), 'permit')));
+
+        $effectiveIssueDate = array_key_exists('issueDate', $data) ? $data['issueDate'] : $document->issue_date?->toDateString();
+        if ($isPermitDoc && !empty($effectiveIssueDate)) {
+            $embassyDetails = is_array($candidate->embassy_details)
+                ? $candidate->embassy_details
+                : (json_decode($candidate->embassy_details ?? '{}', true) ?: []);
+            $embassyDetails['workPermitIssueDate'] = $effectiveIssueDate;
+            if (empty($embassyDetails['category'])) {
+                $embassyDetails['category'] = 'Work Permit';
+            }
+            $candidate->update(['embassy_details' => $embassyDetails]);
+        }
+
         return response()->json([
-            'document' => $this->presentDocument($document->fresh()),
+            'document'  => $this->presentDocument($document->fresh()),
+            'candidate' => $this->presentDetail($candidate->fresh()->load(['company', 'documents', 'submissions', 'withdrawal'])),
         ]);
     }
 
@@ -3041,7 +3275,6 @@ class CandidateController extends Controller
             'passportNumber'      => $candidate->passport_number,
             'passportExpiry'      => $candidate->passport_expiry?->toDateString() ?? '',
             'passportSeries'      => $candidate->passport_series,
-            'passportIssuedBy'    => $candidate->passport_issued_by,
             'passportIssueDate'   => $candidate->passport_issue_date?->toDateString(),
             'passportHistory'     => $candidate->passport_history ?? [],
             'trade'               => $candidate->trade,
@@ -3055,13 +3288,16 @@ class CandidateController extends Controller
             'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
             'nationality'         => $candidate->nationality,
             'currentLocation'     => $candidate->current_location,
+            'address'             => $candidate->address,
             'targetCountry'       => $candidate->target_country ?? '',
             'fatherName'          => $candidate->father_name,
             'motherName'          => $candidate->mother_name,
             'placeOfBirth'        => $candidate->place_of_birth,
             'dateOfBirth'         => $candidate->date_of_birth?->toDateString(),
             'civilStatus'         => $candidate->civil_status,
+            'wifeDetails'         => $candidate->wife_details,
             'childrenCount'       => $candidate->children_count,
+            'childrenDetails'     => $candidate->children_details ?? [],
             'citizenship'         => $candidate->citizenship,
             'town'                => $candidate->town,
             'country'             => $candidate->country,
@@ -3072,6 +3308,8 @@ class CandidateController extends Controller
             'currentJob'          => $candidate->current_job,
             'qualification'       => $candidate->qualification,
             'notes'               => $candidate->notes,
+            'embassyDetails'      => $candidate->embassy_details,
+            'foreignVisit'        => $candidate->foreign_visit,
             'cvSummary'           => $candidate->cv_summary,
             'cvData'              => $candidate->cv_data,
             'balance'             => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
@@ -3095,13 +3333,13 @@ class CandidateController extends Controller
             'passportNumber'      => $candidate->passport_number,
             'passportExpiry'      => $candidate->passport_expiry?->toDateString() ?? '',
             'passportSeries'      => $candidate->passport_series,
-            'passportIssuedBy'    => $candidate->passport_issued_by,
             'passportIssueDate'   => $candidate->passport_issue_date?->toDateString(),
             'passportHistory'     => $candidate->passport_history ?? [],
             'trade'               => $candidate->trade,
             'experienceYears'     => $candidate->experience_years,
             'nationality'         => $candidate->nationality,
             'currentLocation'     => $candidate->current_location,
+            'address'             => $candidate->address,
             'targetCountry'       => $candidate->target_country ?? '',
             'status'              => $candidate->status,
             'recruitmentStage'    => $candidate->recruitment_stage,
@@ -3120,7 +3358,9 @@ class CandidateController extends Controller
             'placeOfBirth'        => $candidate->place_of_birth,
             'dateOfBirth'         => $candidate->date_of_birth?->toDateString(),
             'civilStatus'         => $candidate->civil_status,
+            'wifeDetails'         => $candidate->wife_details,
             'childrenCount'       => $candidate->children_count,
+            'childrenDetails'     => $candidate->children_details ?? [],
             'citizenship'         => $candidate->citizenship,
             'town'                => $candidate->town,
             'country'             => $candidate->country,
@@ -3131,6 +3371,8 @@ class CandidateController extends Controller
             'currentJob'          => $candidate->current_job,
             'qualification'       => $candidate->qualification,
             'notes'               => $candidate->notes,
+            'embassyDetails'      => $candidate->embassy_details,
+            'foreignVisit'        => $candidate->foreign_visit,
             'cvSummary'           => $candidate->cv_summary,
             'cvData'              => $candidate->cv_data,
             'documents'           => $candidate->documents->map(fn (CandidateDocument $d): array => $this->presentDocument($d))->values(),
