@@ -2905,8 +2905,25 @@ class CandidateController extends Controller
             $candidateUpdates['children_count'] = (string) count($candidateUpdates['children_details']);
         }
 
-        // If candidate address is provided (e.g. from Character Certificate / Police Clearance), sync to candidate
-        if ($request->has('address') || $request->has('candidateAddress')) {
+        // If candidate address is provided and document is Character Certificate / Police Clearance, sync to candidate
+        $isCharacterCertDoc = str_contains(strtolower($data['title'] ?? ''), 'character')
+            || str_contains(strtolower($data['title'] ?? ''), 'police')
+            || str_contains(strtolower($data['title'] ?? ''), 'crecter')
+            || str_contains(strtolower($data['title'] ?? ''), 'clearance')
+            || str_contains(strtolower($data['documentTypeName'] ?? ''), 'character')
+            || str_contains(strtolower($data['documentTypeName'] ?? ''), 'police')
+            || str_contains(strtolower($data['documentTypeName'] ?? ''), 'crecter')
+            || str_contains(strtolower($data['documentTypeName'] ?? ''), 'clearance')
+            || ($docType && (
+                str_contains(strtolower($docType->name ?? ''), 'character')
+                || str_contains(strtolower($docType->name ?? ''), 'police')
+                || str_contains(strtolower($docType->name ?? ''), 'crecter')
+                || str_contains(strtolower($docType->name ?? ''), 'clearance')
+                || str_contains(strtolower($docType->code ?? ''), 'character')
+                || str_contains(strtolower($docType->code ?? ''), 'police')
+            ));
+
+        if ($isCharacterCertDoc && ($request->has('address') || $request->has('candidateAddress'))) {
             $addr = trim((string) ($request->input('address') ?? $request->input('candidateAddress') ?? ''));
             if (!empty($addr)) {
                 $candidateUpdates['address'] = $addr;
