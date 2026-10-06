@@ -16,8 +16,7 @@ class CountryController extends Controller
             $query->where('is_active', true);
         }
 
-        $countries = $query->orderBy('sort_order')
-            ->orderBy('name')
+        $countries = $query->orderBy('name', 'asc')
             ->get()
             ->map(fn (Country $country): array => $this->present($country));
 
