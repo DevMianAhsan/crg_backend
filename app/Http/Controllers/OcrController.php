@@ -114,31 +114,79 @@ CRITICAL RULES FOR PAKISTANI PASSPORTS:
    - CRITICAL FOR ADDRESS: Police character certificates contain the candidate's complete residential address under the "Address" / "Place & Period of Stay" section (e.g. "Permanent: VPO THANEEL KAMAL, TEH & DISTT CHAKWAL" or "Present: ..."). Extract this complete address into the "address" field (e.g. "VPO THANEEL KAMAL, TEH & DISTT CHAKWAL"). Strip leading prefixes like "Permanent:" or "Present:" and return the clean full address.
 3. For NADRA Family Registration Certificate (FRC / Family Certificate):
    - Set "document_type" to "FRC".
-   - Extract the FRC Certificate Tracking Number / Document Number into "document_number".
-   - Extract the Date of Issue into "date_of_issue".
-   - Identify all family members in the table/list:
-     * If Wife / Spouse is listed (Relation: "Wife" / "Spouse" / "Zowja"):
-       Extract "wife_details" as an object:
-       {
-         "name": Given name / First name (e.g. "FATIMA" or "MARIA"),
-         "surname": Surname / Last name (e.g. "BIBI" or "UMAIR"),
-         "date_of_birth": "YYYY-MM-DD" (if date of birth is listed),
-         "age": age as integer or string (if listed or calculated),
-         "cnic": 13-digit CNIC (XXXXX-XXXXXXX-X)
-       }
-     * Extract all Children (Relation: "Son" / "Daughter" / "Child" / "Beta" / "Beti"):
-       Extract "children_details" as an array of objects:
-       [
-         {
-           "name": Given / First name,
-           "surname": Surname / Last name,
-           "date_of_birth": "YYYY-MM-DD" (if date of birth is listed),
-           "age": age as integer or string (if listed or calculated),
-           "gender": "Male" or "Female",
-           "cnic": 13-digit CNIC or B-Form / CRC number
-         }
-       ]
-     * Set "children_count": Total number of children found as string (e.g. "2").
+   - Extract the FRC Certificate Tracking Number / Document Number (e.g. 'EA99823296' under top barcode or tracking number at bottom) into "document_number".
+   - Extract the Date of Issue (e.g. 'Date of Issue: 06/10/2025') into "date_of_issue".
+   - CRITICAL: DETERMINE THE EXACT FRC TYPE (Checkboxes at top: '[✓] BY BIRTH' vs '[✓] BY MARRIAGE'):
+
+     CATEGORY A: "Family with Parents and Siblings" (FRC by Birth / '[✓] BY BIRTH' / پیدائش کے مطابق)
+     - Top checkbox is checked for 'BY BIRTH', or document lists Father, Mother, Brother(s), Sister(s).
+     - The applicant is labeled as 'SELF' / 'خود' / 'Applicant'.
+     - RULES FOR CATEGORY A:
+       * Primary Applicant (SELF / Applicant):
+         - Set "given_names" and "surname" to applicant's name.
+         - Set "cnic" to applicant's CNIC / citizen number (e.g. 35404-5114951-5).
+         - Set "date_of_birth" from applicant's card.
+         - Set "gender" ('M' or 'F').
+       * Father (Relation: 'Father' / 'والد'):
+         - Set "father_name" to Father's full name.
+       * Mother (Relation: 'Mother' / 'والدہ'):
+         - Set "mother_name" to Mother's full name.
+       * Siblings (Relation: 'Brother' / 'بھائی' or 'Sister' / 'بہن'):
+         - CRITICAL: Brothers and sisters are SIBLINGS, NOT children!
+         - DO NOT extract brothers or sisters into "children_details"!
+         - Set "children_details" to [].
+         - Set "children_count" to null.
+       * Spouse / Wife:
+         - CRITICAL: Candidate's Mother is NOT candidate's wife! There is NO spouse in Category A.
+         - Set "wife_details" to null.
+
+     CATEGORY B: "Family with Spouse and Children" (FRC by Marriage / '[✓] BY MARRIAGE' / ازدواج کے مطابق)
+     - Top checkbox is checked for 'BY MARRIAGE', or document lists Spouse (Wife/Husband) and Son(s) / Daughter(s).
+     - Each person is displayed in a card with 'Full Name', 'Citizen Number', 'Date of Birth', 'Father Name', 'Mother Name', and a relation label at top-right of the card.
+     - RULES FOR CATEGORY B:
+       * Primary Applicant (Card labeled 'SELF / اپنا' or 'Applicant'):
+         - Set "given_names" and "surname" to applicant's name (e.g. 'Mateen Afzal Abbas').
+         - Set "cnic" to applicant's citizen number (e.g. '35404-5114951-5').
+         - Set "date_of_birth" from applicant's card (e.g. '01/08/1994' -> '1994-08-01').
+         - Extract "father_name" from applicant's card ('Father Name: Ghulam Abbas Shaker' -> 'Ghulam Abbas Shaker').
+         - Extract "mother_name" from applicant's card ('Mother Name: Sughran Bibi' -> 'Sughran Bibi').
+         - If applicant is Female (Relation: 'Wife' or female name):
+           - Set "gender" to "F".
+           - The spouse card (Relation: 'Husband / شوہر') contains HUSBAND's details:
+             Extract "wife_details" as:
+             {
+               "name": Husband's given name,
+               "surname": Husband's surname,
+               "date_of_birth": "YYYY-MM-DD",
+               "age": age as string or integer,
+               "cnic": 13-digit CNIC (XXXXX-XXXXXXX-X),
+               "relation": "Husband"
+             }
+         - If applicant is Male (Relation: 'Head' / 'Husband' / 'SELF' with wife / male name):
+           - Set "gender" to "M".
+           - The spouse card (Relation: 'Wife / زوجہ') contains WIFE's details (e.g. 'Azmat Shaheen', '35404-1335652-4', '01/04/1994'):
+             Extract "wife_details" as:
+             {
+               "name": Wife's given name,
+               "surname": Wife's surname,
+               "date_of_birth": "YYYY-MM-DD",
+               "age": age as string or integer,
+               "cnic": 13-digit CNIC (XXXXX-XXXXXXX-X),
+               "relation": "Wife"
+             }
+       * Children (Section 'Details Of Children / اولاد کی تفصیل' or cards labeled 'SON / بیٹا' or 'DAUGHTER / بیٹی'):
+         - Extract ALL Sons and Daughters from the cards (across any page) into "children_details":
+           [
+             {
+               "name": Child's given name (e.g. "Muhammad", "Muhamamd"),
+               "surname": Child's surname (e.g. "Roshan", "Ayan"),
+               "date_of_birth": "YYYY-MM-DD" (e.g. "2022-09-09", "2023-09-20"),
+               "age": age as string or integer,
+               "gender": "Male" or "Female",
+               "cnic": 13-digit CNIC or B-Form / CRC number (e.g. "35404-5459373-5", "35404-7410929-3")
+             }
+           ]
+         - Set "children_count": Total count of sons and daughters listed in the document summary box (e.g. "2").
 4. Other documents:
    - CNIC / National Identity Card (with 13-digit identity number like 12345-1234567-1, issue date, expiry date): populate BOTH "document_number" and "cnic" with the 13-digit number.
    - Medical Fitness Certificate / GAMCA (with report/slip number, test date, expiry date)
@@ -158,6 +206,7 @@ Extract all visible details and return ONLY a valid JSON object with this exact 
   "surname": string or null (Last name),
   "given_names": string or null (First & middle names),
   "father_name": string or null (Father name or Nom du père),
+  "mother_name": string or null (Mother name if present on FRC with parents),
   "nationality": string or null (e.g. "Pakistani"),
   "date_of_birth": string or null ("YYYY-MM-DD" format),
   "gender": string or null ("M", "F", or "X"),
@@ -172,7 +221,8 @@ Extract all visible details and return ONLY a valid JSON object with this exact 
     "surname": string or null,
     "date_of_birth": string or null ("YYYY-MM-DD"),
     "age": string or number or null,
-    "cnic": string or null
+    "cnic": string or null,
+    "relation": string or null ("Husband" or "Wife")
   } or null,
   "children_details": [
     {
@@ -345,6 +395,7 @@ PROMPT;
         }
 
         $fatherName = $this->normalizePersonNameSafe($extractedJson['father_name'] ?? null, $extractedJson['surname'] ?? null);
+        $motherName = $this->normalizePersonNameSafe($extractedJson['mother_name'] ?? null, null);
 
         // Process Wife / Spouse details for FRC
         $isFrc = str_contains($rawDocType, 'frc') || str_contains($rawDocType, 'family');
@@ -366,6 +417,7 @@ PROMPT;
             'surname'          => $extractedJson['surname'] ?? null,
             'given_names'      => $extractedJson['given_names'] ?? null,
             'father_name'      => $fatherName,
+            'mother_name'      => $motherName,
             'nationality'      => $extractedJson['nationality'] ?? $extractedJson['country_code'] ?? null,
             'issuing_country'  => $extractedJson['issuing_country'] ?? null,
             'country_code'     => $extractedJson['country_code'] ?? null,
@@ -405,6 +457,23 @@ PROMPT;
             return null;
         }
 
+        $relation = trim((string) ($wife['relation'] ?? $wife['relationship'] ?? ''));
+        $relLower = strtolower($relation);
+
+        // Strict guard: reject Mother, Father, Brother, Sister, Self, or Children mistakenly placed in spouse
+        if (
+            str_contains($relLower, 'mother') || str_contains($relLower, 'walida') ||
+            str_contains($relLower, 'father') || str_contains($relLower, 'walid') ||
+            str_contains($relLower, 'brother') || str_contains($relLower, 'sister') ||
+            str_contains($relLower, 'bhai') || str_contains($relLower, 'behan') ||
+            str_contains($relLower, 'self') || str_contains($relLower, 'khud') ||
+            str_contains($relLower, 'son') || str_contains($relLower, 'daughter') ||
+            str_contains($relLower, 'child') || str_contains($relLower, 'beta') ||
+            str_contains($relLower, 'beti')
+        ) {
+            return null;
+        }
+
         $name = trim((string) ($wife['name'] ?? $wife['given_names'] ?? $wife['first_name'] ?? ''));
         $surname = trim((string) ($wife['surname'] ?? $wife['last_name'] ?? ''));
         $dob = $this->formatDateSafe($wife['date_of_birth'] ?? $wife['dob'] ?? null);
@@ -422,12 +491,19 @@ PROMPT;
             return null;
         }
 
+        if (empty($relation)) {
+            $relation = 'Wife';
+        } else {
+            $relation = (stripos($relation, 'husband') !== false || stripos($relation, 'shoher') !== false) ? 'Husband' : 'Wife';
+        }
+
         return [
             'name'        => $name ?: null,
             'surname'     => $surname ?: null,
             'dateOfBirth' => $dob ?: null,
             'age'         => $age !== null && $age !== '' ? (string) $age : null,
             'cnic'        => $this->formatCnicSafe($wife['cnic'] ?? null),
+            'relation'    => $relation,
         ];
     }
 
@@ -443,6 +519,22 @@ PROMPT;
         $formattedList = [];
         foreach ($children as $child) {
             if (!is_array($child)) {
+                continue;
+            }
+
+            $relLower = strtolower(trim((string) ($child['relation'] ?? $child['relationship'] ?? '')));
+
+            // Strict guard: reject Mother, Father, Brother, Sister, Self, Wife, Husband mistakenly placed in children
+            if (
+                str_contains($relLower, 'mother') || str_contains($relLower, 'walida') ||
+                str_contains($relLower, 'father') || str_contains($relLower, 'walid') ||
+                str_contains($relLower, 'brother') || str_contains($relLower, 'sister') ||
+                str_contains($relLower, 'bhai') || str_contains($relLower, 'behan') ||
+                str_contains($relLower, 'sibling') || str_contains($relLower, 'self') ||
+                str_contains($relLower, 'khud') || str_contains($relLower, 'wife') ||
+                str_contains($relLower, 'husband') || str_contains($relLower, 'spouse') ||
+                str_contains($relLower, 'zoja') || str_contains($relLower, 'shoher')
+            ) {
                 continue;
             }
 
