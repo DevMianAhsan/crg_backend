@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CandidateController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\CompanyDocumentController;
 use App\Http\Controllers\CompanyDocumentTemplateController;
 use App\Http\Controllers\CountryController;
 use App\Http\Controllers\DocumentTypeController;
@@ -55,6 +56,11 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('companies', [CompanyController::class, 'store']);
     Route::get('companies/{company}', [CompanyController::class, 'show']);
     Route::get('companies/{company}/logs', [CompanyController::class, 'logs']);
+    Route::get('companies/{company}/documents', [CompanyDocumentController::class, 'index']);
+    Route::post('companies/{company}/documents', [CompanyDocumentController::class, 'store']);
+    Route::post('companies/{company}/documents/{document}', [CompanyDocumentController::class, 'update']);
+    Route::patch('companies/{company}/documents/{document}', [CompanyDocumentController::class, 'update']);
+    Route::delete('companies/{company}/documents/{document}', [CompanyDocumentController::class, 'destroy']);
     Route::get('companies/{company}/templates', [CompanyDocumentTemplateController::class, 'index']);
     Route::post('companies/{company}/templates', [CompanyDocumentTemplateController::class, 'store']);
     Route::patch('companies/{company}/templates/{template}', [CompanyDocumentTemplateController::class, 'update']);
@@ -66,6 +72,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // Document types
     Route::get('document-types', [DocumentTypeController::class, 'index']);
     Route::post('document-types', [DocumentTypeController::class, 'store']);
+    Route::post('document-types/reorder', [DocumentTypeController::class, 'reorder']);
     Route::patch('document-types/{documentType}', [DocumentTypeController::class, 'update']);
     Route::delete('document-types/{documentType}', [DocumentTypeController::class, 'destroy']);
 

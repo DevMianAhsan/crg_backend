@@ -13,6 +13,7 @@ class DocumentType extends Model
         'is_mandatory',
         'validity_months',
         'requires_expiry_date',
+        'priority',
     ];
 
     protected function casts(): array
@@ -21,6 +22,7 @@ class DocumentType extends Model
             'is_mandatory' => 'boolean',
             'requires_expiry_date' => 'boolean',
             'validity_months' => 'integer',
+            'priority' => 'integer',
         ];
     }
 }

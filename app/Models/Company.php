@@ -33,4 +33,9 @@ class Company extends Model
     {
         return $this->hasMany(CompanyLog::class)->latest('created_at')->latest('id');
     }
+
+    public function documents(): HasMany
+    {
+        return $this->hasMany(CompanyDocument::class)->latest('created_at')->latest('id');
+    }
 }
