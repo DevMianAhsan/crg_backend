@@ -14,7 +14,8 @@ class DocumentTypeController extends Controller
     {
         return response()->json([
             'documentTypes' => DocumentType::query()
-                ->orderBy('id')
+                ->orderBy('priority', 'asc')
+                ->orderBy('name', 'asc')
                 ->get()
                 ->map(fn (DocumentType $documentType): array => $this->present($documentType)),
         ]);
@@ -39,6 +40,32 @@ class DocumentTypeController extends Controller
 
         return response()->json([
             'documentType' => $this->present($documentType->fresh()),
+        ]);
+    }
+
+    public function reorder(Request $request): JsonResponse
+    {
+        $this->requirePermission($request, 'document-types.update');
+
+        $request->validate([
+            'items' => ['required', 'array'],
+            'items.*.id' => ['required'],
+            'items.*.priority' => ['required', 'integer', 'min:1'],
+        ]);
+
+        foreach ($request->input('items', []) as $item) {
+            DocumentType::where('id', $item['id'])->update([
+                'priority' => (int) $item['priority'],
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Document types reordered successfully.',
+            'documentTypes' => DocumentType::query()
+                ->orderBy('priority', 'asc')
+                ->orderBy('name', 'asc')
+                ->get()
+                ->map(fn (DocumentType $documentType): array => $this->present($documentType)),
         ]);
     }
 
@@ -78,6 +105,7 @@ class DocumentTypeController extends Controller
             'isMandatory' => ['required', 'boolean'],
             'validityMonths' => ['required', 'integer', 'min:0'],
             'requiresExpiryDate' => ['required', 'boolean'],
+            'priority' => ['nullable', 'integer', 'min:0'],
         ]);
     }
 
@@ -90,6 +118,7 @@ class DocumentTypeController extends Controller
             'is_mandatory' => $data['isMandatory'],
             'validity_months' => $data['validityMonths'],
             'requires_expiry_date' => $data['requiresExpiryDate'],
+            'priority' => isset($data['priority']) ? (int) $data['priority'] : 100,
         ];
     }
 
@@ -103,6 +132,7 @@ class DocumentTypeController extends Controller
             'isMandatory' => $documentType->is_mandatory,
             'validityMonths' => $documentType->validity_months,
             'requiresExpiryDate' => $documentType->requires_expiry_date,
+            'priority' => (int) ($documentType->priority ?? 100),
         ];
     }
 }

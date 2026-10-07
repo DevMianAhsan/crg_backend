@@ -287,6 +287,7 @@ class CompanyController extends Controller
             'sharedCandidatesCount' => (int) ($company->shared_candidates_count ?? 0),
             'totalPlacedCandidates' => Candidate::where('current_company_id', $company->id)->where('status', 'placed')->count(),
             'activeCandidatesCount' => 0,
+            'documentsCount' => $company->documents()->count(),
             'joinedDate' => $company->created_at?->toDateString(),
         ];
     }
