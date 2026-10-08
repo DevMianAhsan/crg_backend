@@ -74,6 +74,8 @@ class NotificationController extends Controller
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
 
+        \App\Services\CacheService::invalidateGroup(\App\Services\CacheService::GROUP_NOTIFICATIONS);
+
         return response()->json(['success' => true, 'updated' => $updated]);
     }
 
