@@ -59,6 +59,11 @@ class DocumentTypeController extends Controller
             ]);
         }
 
+        \App\Services\CacheService::invalidateGroup([
+            \App\Services\CacheService::GROUP_DOCUMENT_TYPES,
+            \App\Services\CacheService::GROUP_CANDIDATES,
+        ]);
+
         return response()->json([
             'message' => 'Document types reordered successfully.',
             'documentTypes' => DocumentType::query()

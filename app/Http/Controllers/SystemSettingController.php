@@ -57,6 +57,8 @@ class SystemSettingController extends Controller
                 ['key' => 'date_format'],
                 ['value' => $request->date_format, 'updated_at' => now(), 'created_at' => now()]
             );
+
+            \App\Services\CacheService::invalidateGroup(\App\Services\CacheService::GROUP_SETTINGS);
         } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Settings table not ready. Please run: php artisan migrate',
