@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\DriveDocument;
+use App\Services\DocumentCompressionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -29,13 +30,18 @@ class DriveDocumentController extends Controller
             'file' => ['required', 'file', 'max:15360'],
         ]);
 
-        $file = $data['file'];
+        $comp = app(DocumentCompressionService::class)->storeAndCompress(
+            $data['file'],
+            'drive',
+            'public'
+        );
+
         $document = DriveDocument::create([
             'name' => $data['name'],
-            'file_path' => $file->store('drive', 'public'),
-            'file_name' => $file->getClientOriginalName(),
-            'file_size' => $file->getSize(),
-            'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
+            'file_path' => $comp['path'],
+            'file_name' => $comp['file_name'],
+            'file_size' => $comp['size_bytes'],
+            'mime_type' => $comp['mime_type'],
             'uploaded_by' => $request->user()?->id,
         ]);
 
@@ -52,13 +58,19 @@ class DriveDocumentController extends Controller
 
         $attributes = ['name' => $data['name']];
         if ($request->hasFile('file')) {
-            Storage::disk('public')->delete($driveDocument->file_path);
-            $file = $data['file'];
+            if ($driveDocument->file_path && Storage::disk('public')->exists($driveDocument->file_path)) {
+                Storage::disk('public')->delete($driveDocument->file_path);
+            }
+            $comp = app(DocumentCompressionService::class)->storeAndCompress(
+                $data['file'],
+                'drive',
+                'public'
+            );
             $attributes += [
-                'file_path' => $file->store('drive', 'public'),
-                'file_name' => $file->getClientOriginalName(),
-                'file_size' => $file->getSize(),
-                'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
+                'file_path' => $comp['path'],
+                'file_name' => $comp['file_name'],
+                'file_size' => $comp['size_bytes'],
+                'mime_type' => $comp['mime_type'],
             ];
         }
 
