@@ -10,6 +10,7 @@ use App\Models\CandidateWithdrawal;
 use App\Models\Company;
 use App\Models\CompanyLog;
 use App\Models\DocumentType;
+use App\Services\DocumentCompressionService;
 use App\Support\Notifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -371,29 +372,40 @@ class CandidateController extends Controller
             'foreign_visit'           => is_array($data['foreignVisit'] ?? $data['foreign_visit'] ?? null) ? json_encode($data['foreignVisit'] ?? $data['foreign_visit']) : ($data['foreignVisit'] ?? $data['foreign_visit'] ?? null),
         ]);
 
-        // Handle photo upload directly inside candidate folder
+        // Handle photo upload directly inside candidate folder (file or base64)
         $photoPath = null;
         if ($request->hasFile('photo')) {
-            $photoPath = $request->file('photo')->store('candidates/' . $candidate->id, 'public');
+            $compPhoto = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('photo'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $photoPath = $compPhoto['path'];
+        } elseif ($request->filled('photo') && is_string($request->input('photo')) && str_starts_with($request->input('photo'), 'data:image')) {
+            $photoPath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('photo'),
+                'candidates/' . $candidate->id,
+                'public',
+                'photo_'
+            );
         }
 
         // Handle signature upload directly inside candidate folder (file or base64)
         $signaturePath = null;
         if ($request->hasFile('signature')) {
-            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
+            $compSig = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('signature'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $signaturePath = $compSig['path'];
         } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
-            $base64Image = $request->input('signature');
-            $imageParts = explode(';base64,', $base64Image);
-            if (count($imageParts) === 2) {
-                $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1] ?? 'png';
-                $imageBase64 = base64_decode($imageParts[1]);
-                if ($imageBase64 !== false) {
-                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
-                    Storage::disk('public')->put($fileName, $imageBase64);
-                    $signaturePath = $fileName;
-                }
-            }
+            $signaturePath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('signature'),
+                'candidates/' . $candidate->id,
+                'public',
+                'sig_'
+            );
         }
 
         if ($photoPath !== null || $signaturePath !== null) {
@@ -1577,7 +1589,8 @@ class CandidateController extends Controller
             'service_charges'  => ['nullable', 'numeric', 'min:0'],
             'country_service_charges' => ['nullable'],
             'countryServiceCharges'   => ['nullable'],
-            'photo'            => ['nullable', 'image', 'max:5120'],
+            'photo'            => ['nullable'],
+            'signature'        => ['nullable'],
             'fatherName'       => ['nullable', 'string', 'max:150'],
             'motherName'       => ['nullable', 'string', 'max:150'],
             'placeOfBirth'     => ['nullable', 'string', 'max:150'],
@@ -1634,7 +1647,22 @@ class CandidateController extends Controller
             if ($photoPath) {
                 Storage::disk('public')->delete($photoPath);
             }
-            $photoPath = $request->file('photo')->store('candidates/' . $candidate->id, 'public');
+            $compPhoto = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('photo'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $photoPath = $compPhoto['path'];
+        } elseif ($request->filled('photo') && is_string($request->input('photo')) && str_starts_with($request->input('photo'), 'data:image')) {
+            if ($photoPath) {
+                Storage::disk('public')->delete($photoPath);
+            }
+            $photoPath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('photo'),
+                'candidates/' . $candidate->id,
+                'public',
+                'photo_'
+            );
         }
 
         $signaturePath = $candidate->signature_path;
@@ -1642,23 +1670,22 @@ class CandidateController extends Controller
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
+            $compSig = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('signature'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $signaturePath = $compSig['path'];
         } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $base64Image = $request->input('signature');
-            $imageParts = explode(';base64,', $base64Image);
-            if (count($imageParts) === 2) {
-                $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1] ?? 'png';
-                $imageBase64 = base64_decode($imageParts[1]);
-                if ($imageBase64 !== false) {
-                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
-                    Storage::disk('public')->put($fileName, $imageBase64);
-                    $signaturePath = $fileName;
-                }
-            }
+            $signaturePath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('signature'),
+                'candidates/' . $candidate->id,
+                'public',
+                'sig_'
+            );
         } elseif ($request->boolean('removeSignature')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
@@ -2661,23 +2688,22 @@ class CandidateController extends Controller
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
+            $compSig = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('signature'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $signaturePath = $compSig['path'];
         } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $base64Image = $request->input('signature');
-            $imageParts = explode(';base64,', $base64Image);
-            if (count($imageParts) === 2) {
-                $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1] ?? 'png';
-                $imageBase64 = base64_decode($imageParts[1]);
-                if ($imageBase64 !== false) {
-                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
-                    Storage::disk('public')->put($fileName, $imageBase64);
-                    $signaturePath = $fileName;
-                }
-            }
+            $signaturePath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('signature'),
+                'candidates/' . $candidate->id,
+                'public',
+                'sig_'
+            );
         }
 
         if (! $signaturePath) {
@@ -2917,10 +2943,14 @@ class CandidateController extends Controller
         $fileSize = null;
 
         if ($request->hasFile('file')) {
-            $file     = $request->file('file');
-            $filePath = $file->store('candidates/' . $candidate->id . '/documents', 'public');
-            $fileName = $file->getClientOriginalName();
-            $fileSize = $this->humanFileSize($file->getSize());
+            $compDoc  = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('file'),
+                'candidates/' . $candidate->id . '/documents',
+                'public'
+            );
+            $filePath = $compDoc['path'];
+            $fileName = $compDoc['file_name'];
+            $fileSize = $compDoc['file_size'];
         }
 
         // Determine document status based on expiry date
@@ -3140,10 +3170,14 @@ class CandidateController extends Controller
             if ($filePath) {
                 Storage::disk('public')->delete($filePath);
             }
-            $file     = $request->file('file');
-            $filePath = $file->store('candidates/' . $candidate->id . '/documents', 'public');
-            $fileName = $file->getClientOriginalName();
-            $fileSize = $this->humanFileSize($file->getSize());
+            $compDoc  = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('file'),
+                'candidates/' . $candidate->id . '/documents',
+                'public'
+            );
+            $filePath = $compDoc['path'];
+            $fileName = $compDoc['file_name'];
+            $fileSize = $compDoc['file_size'];
         }
 
         $updateData = array_filter([
@@ -3325,10 +3359,14 @@ class CandidateController extends Controller
 
         // 3. Upload new passport document if file provided
         if ($request->hasFile('file')) {
-            $file = $request->file('file');
-            $filePath = $file->store('candidates/' . $candidate->id . '/documents', 'public');
-            $fileName = $file->getClientOriginalName();
-            $fileSize = $this->humanFileSize($file->getSize());
+            $compDoc  = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('file'),
+                'candidates/' . $candidate->id . '/documents',
+                'public'
+            );
+            $filePath = $compDoc['path'];
+            $fileName = $compDoc['file_name'];
+            $fileSize = $compDoc['file_size'];
 
             $expiry = \Carbon\Carbon::parse($data['passportExpiry']);
             $docStatus = $expiry->isPast() ? 'expired' : 'verified';
@@ -3384,23 +3422,22 @@ class CandidateController extends Controller
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $signaturePath = $request->file('signature')->store('candidates/' . $candidate->id, 'public');
+            $compSig = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('signature'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $signaturePath = $compSig['path'];
         } elseif ($request->filled('signature') && is_string($request->input('signature')) && str_starts_with($request->input('signature'), 'data:image')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
             }
-            $base64Image = $request->input('signature');
-            $imageParts = explode(';base64,', $base64Image);
-            if (count($imageParts) === 2) {
-                $imageTypeAux = explode('image/', $imageParts[0]);
-                $imageType = $imageTypeAux[1] ?? 'png';
-                $imageBase64 = base64_decode($imageParts[1]);
-                if ($imageBase64 !== false) {
-                    $fileName = 'candidates/' . $candidate->id . '/' . uniqid('sig_', true) . '.' . $imageType;
-                    Storage::disk('public')->put($fileName, $imageBase64);
-                    $signaturePath = $fileName;
-                }
-            }
+            $signaturePath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('signature'),
+                'candidates/' . $candidate->id,
+                'public',
+                'sig_'
+            );
         } elseif ($request->boolean('removeSignature')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);

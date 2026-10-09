@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Company;
 use App\Models\CompanyDocument;
 use App\Models\CompanyLog;
+use App\Services\DocumentCompressionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -53,12 +54,15 @@ class CompanyDocumentController extends Controller
         $fileSize = null;
 
         if ($request->hasFile('file')) {
-            $file = $request->file('file');
-            // Store inside: company/{company_id}/...
             $folder = 'company/' . $company->id;
-            $filePath = $file->store($folder, 'public');
-            $fileName = $file->getClientOriginalName();
-            $fileSize = $this->humanFileSize($file->getSize());
+            $compDoc = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('file'),
+                $folder,
+                'public'
+            );
+            $filePath = $compDoc['path'];
+            $fileName = $compDoc['file_name'];
+            $fileSize = $compDoc['file_size'];
         }
 
         $status = $data['status'] ?? 'active';
@@ -154,11 +158,15 @@ class CompanyDocumentController extends Controller
                 Storage::disk('public')->delete($document->file_path);
             }
 
-            $file = $request->file('file');
             $folder = 'company/' . $company->id;
-            $updates['file_path'] = $file->store($folder, 'public');
-            $updates['file_name'] = $file->getClientOriginalName();
-            $updates['file_size'] = $this->humanFileSize($file->getSize());
+            $compDoc = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('file'),
+                $folder,
+                'public'
+            );
+            $updates['file_path'] = $compDoc['path'];
+            $updates['file_name'] = $compDoc['file_name'];
+            $updates['file_size'] = $compDoc['file_size'];
         }
 
         $document->update($updates);
