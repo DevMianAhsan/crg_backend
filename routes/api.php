@@ -117,6 +117,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('candidates/export', [CandidateController::class, 'exportExcel']);
     Route::post('candidates/return-batch', [CandidateController::class, 'returnBatchToPool']);
     Route::match(['post', 'delete'], 'candidates/batch-delete', [CandidateController::class, 'destroyBatch']);
+    Route::post('candidates/fingerprint/identify', [CandidateController::class, 'identifyByFingerprint']);
 
     // Candidates — single resource
     Route::get('candidates/{candidate}', [CandidateController::class, 'show']);
@@ -131,6 +132,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('candidates/{candidate}/reactivate', [CandidateController::class, 'reactivate']);
     Route::post('candidates/{candidate}/renew-passport', [CandidateController::class, 'renewPassport']);
     Route::post('candidates/{candidate}/signature', [CandidateController::class, 'updateSignature']);
+    Route::post('candidates/{candidate}/biometrics', [CandidateController::class, 'updateBiometrics']);
+    Route::post('candidates/{candidate}/fingerprint/verify', [CandidateController::class, 'verifyFingerprint']);
     Route::post('candidates/{candidate}/cv', [CandidateController::class, 'saveCv']);
 
     // Candidate Documents

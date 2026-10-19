@@ -408,10 +408,46 @@ class CandidateController extends Controller
             );
         }
 
-        if ($photoPath !== null || $signaturePath !== null) {
+        // Handle thumbprint / fingerprint upload directly inside candidate folder
+        $fingerprintPath = null;
+        $fingerprintTemplate = null;
+        $fingerprintQuality = null;
+        $fingerprintCapturedAt = null;
+
+        if ($request->hasFile('fingerprint')) {
+            $compFp = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $fingerprintPath = $compFp['path'];
+            $fingerprintCapturedAt = now();
+        } elseif ($request->filled('fingerprint') && is_string($request->input('fingerprint')) && str_starts_with($request->input('fingerprint'), 'data:image')) {
+            $fingerprintPath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public',
+                'fp_'
+            );
+            $fingerprintCapturedAt = now();
+        }
+
+        if ($request->filled('fingerprint_template') || $request->filled('fingerprintTemplate')) {
+            $fingerprintTemplate = (string) ($request->input('fingerprint_template') ?? $request->input('fingerprintTemplate'));
+            $fingerprintCapturedAt = now();
+        }
+        if ($request->filled('fingerprint_quality') || $request->filled('fingerprintQuality')) {
+            $fingerprintQuality = (int) ($request->input('fingerprint_quality') ?? $request->input('fingerprintQuality'));
+        }
+
+        if ($photoPath !== null || $signaturePath !== null || $fingerprintPath !== null || $fingerprintTemplate !== null) {
             $candidate->update([
-                'photo_path'     => $photoPath,
-                'signature_path' => $signaturePath,
+                'photo_path'              => $photoPath,
+                'signature_path'          => $signaturePath,
+                'fingerprint_path'        => $fingerprintPath,
+                'fingerprint_template'    => $fingerprintTemplate,
+                'fingerprint_quality'     => $fingerprintQuality,
+                'fingerprint_captured_at' => $fingerprintCapturedAt,
             ]);
         }
 
@@ -1693,6 +1729,52 @@ class CandidateController extends Controller
             $signaturePath = null;
         }
 
+        // Handle thumbprint / fingerprint upload directly inside candidate folder
+        $fingerprintPath = $candidate->fingerprint_path;
+        $fingerprintTemplate = $candidate->fingerprint_template;
+        $fingerprintQuality = $candidate->fingerprint_quality;
+        $fingerprintCapturedAt = $candidate->fingerprint_captured_at;
+
+        if ($request->hasFile('fingerprint')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $compFp = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $fingerprintPath = $compFp['path'];
+            $fingerprintCapturedAt = now();
+        } elseif ($request->filled('fingerprint') && is_string($request->input('fingerprint')) && str_starts_with($request->input('fingerprint'), 'data:image')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $fingerprintPath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public',
+                'fp_'
+            );
+            $fingerprintCapturedAt = now();
+        } elseif ($request->boolean('removeFingerprint')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $fingerprintPath = null;
+            $fingerprintTemplate = null;
+            $fingerprintQuality = null;
+            $fingerprintCapturedAt = null;
+        }
+
+        if ($request->filled('fingerprint_template') || $request->filled('fingerprintTemplate')) {
+            $fingerprintTemplate = (string) ($request->input('fingerprint_template') ?? $request->input('fingerprintTemplate'));
+            $fingerprintCapturedAt = now();
+        }
+        if ($request->filled('fingerprint_quality') || $request->filled('fingerprintQuality')) {
+            $fingerprintQuality = (int) ($request->input('fingerprint_quality') ?? $request->input('fingerprintQuality'));
+        }
+
         $skills = $request->input('skills');
         if (is_string($skills)) {
             $decoded = json_decode($skills, true);
@@ -1822,6 +1904,10 @@ class CandidateController extends Controller
             'skills'             => $skills ?? $candidate->skills,
             'photo_path'         => $photoPath,
             'signature_path'     => $signaturePath,
+            'fingerprint_path'        => $fingerprintPath,
+            'fingerprint_template'    => $fingerprintTemplate,
+            'fingerprint_quality'     => $fingerprintQuality,
+            'fingerprint_captured_at' => $fingerprintCapturedAt,
             'father_name'        => array_key_exists('fatherName', $data) ? $this->normalizePersonName($data['fatherName'], $data['lastName'] ?? $candidate->last_name) : $candidate->father_name,
             'mother_name'        => array_key_exists('motherName', $data) ? $data['motherName'] : $candidate->mother_name,
             'place_of_birth'     => array_key_exists('placeOfBirth', $data) ? $data['placeOfBirth'] : $candidate->place_of_birth,
@@ -2633,16 +2719,20 @@ class CandidateController extends Controller
                 'currentLocation' => $candidate->current_location ?? '',
                 'nationality'     => $candidate->nationality ?? 'Pakistani',
                 'careOf'          => $candidate->care_of ?? '',
-                'photoUrl'        => $candidate->photo_url,
-                'signatureUrl'    => $candidate->signature_url,
-                'agreementToken'  => $candidate->agreement_token,
-                'termsAgreedAt'   => $candidate->terms_agreed_at?->toIso8601String(),
-                'hasAgreed'       => ! empty($candidate->terms_agreed_at) || ! empty($candidate->signature_path),
-                'balance'         => (float) ($candidate->balance ?? 0),
-                'currency'        => 'PKR',
+                'photoUrl'              => $candidate->photo_url,
+                'signatureUrl'          => $candidate->signature_url,
+                'fingerprintUrl'        => $candidate->fingerprint_url,
+                'fingerprintQuality'    => $candidate->fingerprint_quality,
+                'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
+                'hasFingerprint'        => ! empty($candidate->fingerprint_path) || ! empty($candidate->fingerprint_template),
+                'agreementToken'        => $candidate->agreement_token,
+                'termsAgreedAt'         => $candidate->terms_agreed_at?->toIso8601String(),
+                'hasAgreed'             => ! empty($candidate->terms_agreed_at) || ! empty($candidate->signature_path) || ! empty($candidate->fingerprint_path),
+                'balance'               => (float) ($candidate->balance ?? 0),
+                'currency'              => 'PKR',
                 'countryServiceCharges' => $candidate->country_service_charges ?? [],
                 'country_service_charges' => $candidate->country_service_charges ?? [],
-                'createdAt'       => $candidate->created_at?->toIso8601String(),
+                'createdAt'             => $candidate->created_at?->toIso8601String(),
             ],
         ]);
     }
@@ -2683,6 +2773,10 @@ class CandidateController extends Controller
         }
 
         $signaturePath = $candidate->signature_path;
+        $fingerprintPath = $candidate->fingerprint_path;
+        $fingerprintTemplate = $candidate->fingerprint_template;
+        $fingerprintQuality = $candidate->fingerprint_quality;
+        $fingerprintCapturedAt = $candidate->fingerprint_captured_at;
 
         if ($request->hasFile('signature')) {
             if ($signaturePath) {
@@ -2706,29 +2800,72 @@ class CandidateController extends Controller
             );
         }
 
-        if (! $signaturePath) {
+        // Handle candidate fingerprint image
+        if ($request->hasFile('fingerprint')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $compFp = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $fingerprintPath = $compFp['path'];
+            $fingerprintCapturedAt = now();
+        } elseif ($request->filled('fingerprint') && is_string($request->input('fingerprint')) && str_starts_with($request->input('fingerprint'), 'data:image')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $fingerprintPath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public',
+                'fp_'
+            );
+            $fingerprintCapturedAt = now();
+        }
+
+        // Handle biometric ISO/ANSI minutiae template
+        if ($request->filled('fingerprint_template') || $request->filled('fingerprintTemplate')) {
+            $fingerprintTemplate = (string) ($request->input('fingerprint_template') ?? $request->input('fingerprintTemplate'));
+            $fingerprintCapturedAt = now();
+        }
+
+        if ($request->filled('fingerprint_quality') || $request->filled('fingerprintQuality')) {
+            $fingerprintQuality = (int) ($request->input('fingerprint_quality') ?? $request->input('fingerprintQuality'));
+        }
+
+        if (! $signaturePath && ! $fingerprintPath && ! $fingerprintTemplate) {
             return response()->json([
-                'message' => 'Please provide a valid agreement confirmation before submitting.',
+                'message' => 'Please provide a valid signature or fingerprint confirmation before submitting.',
             ], 422);
         }
 
         $candidate->update([
-            'signature_path'  => $signaturePath,
-            'terms_agreed_at' => now(),
+            'signature_path'          => $signaturePath,
+            'fingerprint_path'        => $fingerprintPath,
+            'fingerprint_template'    => $fingerprintTemplate,
+            'fingerprint_quality'     => $fingerprintQuality,
+            'fingerprint_captured_at' => $fingerprintCapturedAt,
+            'terms_agreed_at'         => now(),
         ]);
 
         return response()->json([
             'message'   => 'Candidate agreement submitted successfully.',
             'candidate' => [
-                'id'             => (string) $candidate->id,
-                'firstName'      => $candidate->first_name,
-                'lastName'       => $candidate->last_name,
-                'signatureUrl'   => $candidate->signature_url,
-                'termsAgreedAt'  => $candidate->terms_agreed_at?->toIso8601String(),
-                'hasAgreed'      => true,
-                'agreementToken' => $candidate->agreement_token,
-                'balance'        => (float) ($candidate->balance ?? 0),
-                'currency'       => 'PKR',
+                'id'                    => (string) $candidate->id,
+                'firstName'             => $candidate->first_name,
+                'lastName'              => $candidate->last_name,
+                'signatureUrl'          => $candidate->signature_url,
+                'fingerprintUrl'        => $candidate->fingerprint_url,
+                'fingerprintQuality'    => $candidate->fingerprint_quality,
+                'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
+                'hasFingerprint'        => ! empty($candidate->fingerprint_path) || ! empty($candidate->fingerprint_template),
+                'termsAgreedAt'         => $candidate->terms_agreed_at?->toIso8601String(),
+                'hasAgreed'             => true,
+                'agreementToken'        => $candidate->agreement_token,
+                'balance'               => (float) ($candidate->balance ?? 0),
+                'currency'              => 'PKR',
             ],
         ]);
     }
@@ -3417,7 +3554,12 @@ class CandidateController extends Controller
         $this->requirePermission($request, 'candidates.update');
 
         $signaturePath = $candidate->signature_path;
+        $fingerprintPath = $candidate->fingerprint_path;
+        $fingerprintTemplate = $candidate->fingerprint_template;
+        $fingerprintQuality = $candidate->fingerprint_quality;
+        $fingerprintCapturedAt = $candidate->fingerprint_captured_at;
 
+        // Signature handling
         if ($request->hasFile('signature')) {
             if ($signaturePath) {
                 Storage::disk('public')->delete($signaturePath);
@@ -3445,13 +3587,232 @@ class CandidateController extends Controller
             $signaturePath = null;
         }
 
-        $candidate->update(['signature_path' => $signaturePath]);
+        // Fingerprint image handling
+        if ($request->hasFile('fingerprint')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $compFp = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public'
+            );
+            $fingerprintPath = $compFp['path'];
+            $fingerprintCapturedAt = now();
+        } elseif ($request->filled('fingerprint') && is_string($request->input('fingerprint')) && str_starts_with($request->input('fingerprint'), 'data:image')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $fingerprintPath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('fingerprint'),
+                'candidates/' . $candidate->id,
+                'public',
+                'fp_'
+            );
+            $fingerprintCapturedAt = now();
+        } elseif ($request->boolean('removeFingerprint')) {
+            if ($fingerprintPath) {
+                Storage::disk('public')->delete($fingerprintPath);
+            }
+            $fingerprintPath = null;
+            $fingerprintTemplate = null;
+            $fingerprintQuality = null;
+            $fingerprintCapturedAt = null;
+        }
+
+        // Fingerprint template & quality handling
+        if ($request->filled('fingerprint_template') || $request->filled('fingerprintTemplate')) {
+            $fingerprintTemplate = (string) ($request->input('fingerprint_template') ?? $request->input('fingerprintTemplate'));
+            $fingerprintCapturedAt = now();
+        }
+
+        if ($request->filled('fingerprint_quality') || $request->filled('fingerprintQuality')) {
+            $fingerprintQuality = (int) ($request->input('fingerprint_quality') ?? $request->input('fingerprintQuality'));
+        }
+
+        $candidate->update([
+            'signature_path'          => $signaturePath,
+            'fingerprint_path'        => $fingerprintPath,
+            'fingerprint_template'    => $fingerprintTemplate,
+            'fingerprint_quality'     => $fingerprintQuality,
+            'fingerprint_captured_at' => $fingerprintCapturedAt,
+        ]);
         $candidate->load(['company', 'documents', 'submissions.company', 'withdrawal']);
 
         return response()->json([
-            'message'   => 'Candidate electronic signature updated successfully.',
+            'message'   => 'Candidate biometrics and signature updated successfully.',
             'candidate' => $this->presentDetail($candidate->fresh()),
         ]);
+    }
+
+    /** Alias for updating candidate biometrics. */
+    public function updateBiometrics(Request $request, Candidate $candidate): JsonResponse
+    {
+        return $this->updateSignature($request, $candidate);
+    }
+
+    /**
+     * Verify live scanned template against a candidate's stored template (1:1 Matching).
+     */
+    public function verifyFingerprint(Request $request, Candidate $candidate): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.view');
+
+        if (empty($candidate->fingerprint_template)) {
+            return response()->json([
+                'matched' => false,
+                'score'   => 0,
+                'message' => "Candidate {$candidate->first_name} {$candidate->last_name} does not have a registered fingerprint template.",
+            ], 422);
+        }
+
+        $liveTemplate = (string) ($request->input('template') ?? $request->input('liveTemplate') ?? '');
+        $clientScore  = $request->has('score') ? (int) $request->input('score') : null;
+
+        if (empty($liveTemplate) && $clientScore === null) {
+            return response()->json([
+                'matched' => false,
+                'score'   => 0,
+                'message' => 'No live fingerprint scan or matching score provided.',
+            ], 422);
+        }
+
+        $score = $this->calculateTemplateSimilarity($candidate->fingerprint_template, $liveTemplate, $clientScore);
+        $isMatch = $score >= 60;
+
+        return response()->json([
+            'matched'   => $isMatch,
+            'score'     => $score,
+            'threshold' => 60,
+            'message'   => $isMatch
+                ? "Fingerprint verified successfully! Match score: {$score}% (تصدیق کامیاب)"
+                : "Fingerprint mismatch! Match score: {$score}% (فنگر پرنٹ مماثل نہیں ہے)",
+            'candidate' => $this->presentDetail($candidate),
+        ]);
+    }
+
+    /**
+     * Identify an unknown candidate by matching live template against all candidates (1:N Matching).
+     */
+    public function identifyByFingerprint(Request $request): JsonResponse
+    {
+        $this->requirePermission($request, 'candidates.view');
+
+        $liveTemplate = (string) ($request->input('template') ?? $request->input('liveTemplate') ?? '');
+        if (empty($liveTemplate)) {
+            return response()->json([
+                'matched' => false,
+                'score'   => 0,
+                'message' => 'No live fingerprint template provided for identification.',
+            ], 422);
+        }
+
+        $candidatesWithBiometrics = Candidate::whereNotNull('fingerprint_template')
+            ->where('fingerprint_template', '!=', '')
+            ->get();
+
+        if ($candidatesWithBiometrics->isEmpty()) {
+            return response()->json([
+                'matched' => false,
+                'score'   => 0,
+                'message' => 'No candidates in the database have registered fingerprint templates.',
+            ], 404);
+        }
+
+        $bestScore = 0;
+        $bestCandidate = null;
+
+        foreach ($candidatesWithBiometrics as $cand) {
+            $score = $this->calculateTemplateSimilarity($cand->fingerprint_template, $liveTemplate);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestCandidate = $cand;
+            }
+        }
+
+        if ($bestCandidate && $bestScore >= 60) {
+            return response()->json([
+                'matched'   => true,
+                'score'     => $bestScore,
+                'threshold' => 60,
+                'message'   => "Candidate identified: {$bestCandidate->first_name} {$bestCandidate->last_name} ({$bestCandidate->code}) with {$bestScore}% match score.",
+                'candidate' => $this->presentDetail($bestCandidate),
+            ]);
+        }
+
+        return response()->json([
+            'matched'   => false,
+            'score'     => $bestScore,
+            'threshold' => 60,
+            'message'   => 'No candidate found matching this fingerprint scan (highest score: ' . $bestScore . '%).',
+        ]);
+    }
+
+    /**
+     * Compute biometric matching score (0-100) between two templates.
+     */
+    private function calculateTemplateSimilarity(string $t1, string $t2, ?int $clientScore = null): int
+    {
+        if ($clientScore !== null && $clientScore >= 0) {
+            return min(100, max(0, $clientScore));
+        }
+
+        $t1 = trim($t1);
+        $t2 = trim($t2);
+
+        if ($t1 === '' || $t2 === '') {
+            return 0;
+        }
+
+        if ($t1 === $t2) {
+            return 100;
+        }
+
+        // Try decoding base64 templates
+        $b1 = base64_decode($t1, true);
+        $b2 = base64_decode($t2, true);
+
+        if ($b1 === false || $b2 === false) {
+            similar_text($t1, $t2, $percent);
+            return (int) round($percent);
+        }
+
+        $len1 = strlen($b1);
+        $len2 = strlen($b2);
+        if ($len1 < 10 || $len2 < 10) {
+            return 0;
+        }
+
+        // Calculate byte-level n-gram Jaccard overlap on minutiae bytes
+        $chunkSize = 4;
+        $set1 = [];
+        for ($i = 0; $i <= $len1 - $chunkSize; $i += 2) {
+            $key = substr($b1, $i, $chunkSize);
+            $set1[$key] = ($set1[$key] ?? 0) + 1;
+        }
+
+        $set2 = [];
+        for ($i = 0; $i <= $len2 - $chunkSize; $i += 2) {
+            $key = substr($b2, $i, $chunkSize);
+            $set2[$key] = ($set2[$key] ?? 0) + 1;
+        }
+
+        $intersection = 0;
+        $union = 0;
+        $allKeys = array_unique(array_merge(array_keys($set1), array_keys($set2)));
+        foreach ($allKeys as $k) {
+            $c1 = $set1[$k] ?? 0;
+            $c2 = $set2[$k] ?? 0;
+            $intersection += min($c1, $c2);
+            $union += max($c1, $c2);
+        }
+
+        if ($union === 0) {
+            return 0;
+        }
+
+        $similarity = ($intersection / $union) * 100;
+        return (int) round($similarity);
     }
 
     // --------------------------------------------------------------------------
@@ -3482,6 +3843,10 @@ class CandidateController extends Controller
             'currentCompanyName'  => $candidate->company?->name,
             'photoUrl'            => $candidate->photo_url,
             'signatureUrl'        => $candidate->signature_url,
+            'fingerprintUrl'      => $candidate->fingerprint_url,
+            'hasFingerprint'      => ! empty($candidate->fingerprint_path) || ! empty($candidate->fingerprint_template),
+            'fingerprintQuality'  => $candidate->fingerprint_quality,
+            'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
             'agreementToken'      => $candidate->ensureAgreementToken(),
             'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
             'nationality'         => $candidate->nationality,
@@ -3554,6 +3919,11 @@ class CandidateController extends Controller
             'skills'              => $candidate->skills ?? [],
             'photoUrl'            => $candidate->photo_url,
             'signatureUrl'        => $candidate->signature_url,
+            'fingerprintUrl'      => $candidate->fingerprint_url,
+            'fingerprintTemplate' => $candidate->fingerprint_template,
+            'fingerprintQuality'  => $candidate->fingerprint_quality,
+            'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
+            'hasFingerprint'      => ! empty($candidate->fingerprint_path) || ! empty($candidate->fingerprint_template),
             'agreementToken'      => $candidate->ensureAgreementToken(),
             'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
             'balance'             => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
