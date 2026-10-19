@@ -41,6 +41,10 @@ class Candidate extends Model
         'skills',
         'photo_path',
         'signature_path',
+        'fingerprint_path',
+        'fingerprint_template',
+        'fingerprint_quality',
+        'fingerprint_captured_at',
         'agreement_token',
         'terms_agreed_at',
         'service_charges',
@@ -82,6 +86,8 @@ class Candidate extends Model
         'joined_date'             => 'date',
         'date_of_birth'           => 'date',
         'terms_agreed_at'         => 'datetime',
+        'fingerprint_captured_at' => 'datetime',
+        'fingerprint_quality'     => 'integer',
         'service_charges'         => 'decimal:2',
         'experience_years'        => 'integer',
         'age'                     => 'integer',
@@ -228,5 +234,19 @@ class Candidate extends Model
         }
 
         return Storage::disk('public')->url($this->signature_path);
+    }
+
+    /** Full public URL for the candidate biometric fingerprint image. */
+    public function getFingerprintUrlAttribute(): ?string
+    {
+        if (! $this->fingerprint_path) {
+            return null;
+        }
+
+        if (function_exists('request') && request()?->header('host')) {
+            return asset('storage/' . ltrim($this->fingerprint_path, '/'));
+        }
+
+        return Storage::disk('public')->url($this->fingerprint_path);
     }
 }
