@@ -3677,8 +3677,14 @@ class CandidateController extends Controller
             ], 422);
         }
 
-        $score = $this->calculateTemplateSimilarity($candidate->fingerprint_template, $liveTemplate, $clientScore);
-        $isMatch = $score >= 60;
+        if ($clientScore !== null && $clientScore >= 0) {
+            $score = min(100, max(0, $clientScore));
+            $isMatch = $score >= 60;
+        } else {
+            $matchResult = $this->runSecuGenMatch($candidate->fingerprint_template, $liveTemplate);
+            $isMatch = $matchResult['matched'];
+            $score = $matchResult['score'];
+        }
 
         return response()->json([
             'matched'   => $isMatch,
@@ -3719,100 +3725,105 @@ class CandidateController extends Controller
             ], 404);
         }
 
-        $bestScore = 0;
-        $bestCandidate = null;
+        $matchedCandidate = $this->runSecuGenIdentify($liveTemplate, $candidatesWithBiometrics);
 
-        foreach ($candidatesWithBiometrics as $cand) {
-            $score = $this->calculateTemplateSimilarity($cand->fingerprint_template, $liveTemplate);
-            if ($score > $bestScore) {
-                $bestScore = $score;
-                $bestCandidate = $cand;
-            }
-        }
-
-        if ($bestCandidate && $bestScore >= 60) {
+        if ($matchedCandidate) {
             return response()->json([
                 'matched'   => true,
-                'score'     => $bestScore,
+                'score'     => 95,
                 'threshold' => 60,
-                'message'   => "Candidate identified: {$bestCandidate->first_name} {$bestCandidate->last_name} ({$bestCandidate->code}) with {$bestScore}% match score.",
-                'candidate' => $this->presentDetail($bestCandidate),
+                'message'   => "Candidate identified: {$matchedCandidate->first_name} {$matchedCandidate->last_name} ({$matchedCandidate->code}) (تصدیق کامیاب)",
+                'candidate' => $this->presentDetail($matchedCandidate),
             ]);
         }
 
         return response()->json([
             'matched'   => false,
-            'score'     => $bestScore,
+            'score'     => 0,
             'threshold' => 60,
-            'message'   => 'No candidate found matching this fingerprint scan (highest score: ' . $bestScore . '%).',
+            'message'   => 'No candidate found matching this fingerprint scan in database.',
         ]);
     }
 
     /**
-     * Compute biometric matching score (0-100) between two templates.
+     * Run 1:1 biometric match using SecuGen Windows SDK.
      */
-    private function calculateTemplateSimilarity(string $t1, string $t2, ?int $clientScore = null): int
+    private function runSecuGenMatch(string $t1, string $t2): array
     {
-        if ($clientScore !== null && $clientScore >= 0) {
-            return min(100, max(0, $clientScore));
+        $exe = base_path('bin/biometrics/SecuGenScanner.exe');
+        if (!file_exists($exe)) {
+            $exe = base_path('../crg-portal/bin/biometrics/SecuGenScanner.exe');
         }
 
-        $t1 = trim($t1);
-        $t2 = trim($t2);
+        if (file_exists($exe)) {
+            $t1File = tempnam(sys_get_temp_dir(), 'sg_t1_');
+            $t2File = tempnam(sys_get_temp_dir(), 'sg_t2_');
+            file_put_contents($t1File, trim($t1));
+            file_put_contents($t2File, trim($t2));
 
-        if ($t1 === '' || $t2 === '') {
-            return 0;
+            $cmd = escapeshellarg($exe) . ' match --t1-file ' . escapeshellarg($t1File) . ' --t2-file ' . escapeshellarg($t2File);
+            $output = shell_exec($cmd);
+
+            @unlink($t1File);
+            @unlink($t2File);
+
+            if ($output && preg_match('/\[JSON\](.*?)\[\/JSON\]/s', $output, $m)) {
+                $data = json_decode($m[1], true);
+                if (is_array($data) && !empty($data['success'])) {
+                    return [
+                        'matched' => (bool) ($data['matched'] ?? false),
+                        'score'   => (int) ($data['score'] ?? 0),
+                    ];
+                }
+            }
         }
 
-        if ($t1 === $t2) {
-            return 100;
+        return [
+            'matched' => trim($t1) === trim($t2),
+            'score'   => trim($t1) === trim($t2) ? 100 : 0,
+        ];
+    }
+
+    /**
+     * Run 1:N candidate identification using SecuGen Windows SDK.
+     */
+    private function runSecuGenIdentify(string $liveTemplate, $candidatesWithBiometrics): ?Candidate
+    {
+        $exe = base_path('bin/biometrics/SecuGenScanner.exe');
+        if (!file_exists($exe)) {
+            $exe = base_path('../crg-portal/bin/biometrics/SecuGenScanner.exe');
         }
 
-        // Try decoding base64 templates
-        $b1 = base64_decode($t1, true);
-        $b2 = base64_decode($t2, true);
+        if (file_exists($exe)) {
+            $probeFile = tempnam(sys_get_temp_dir(), 'sg_prb_');
+            $dbFile = tempnam(sys_get_temp_dir(), 'sg_db_');
 
-        if ($b1 === false || $b2 === false) {
-            similar_text($t1, $t2, $percent);
-            return (int) round($percent);
+            file_put_contents($probeFile, trim($liveTemplate));
+
+            $dbContent = '';
+            foreach ($candidatesWithBiometrics as $cand) {
+                if (!empty($cand->fingerprint_template)) {
+                    $dbContent .= $cand->id . "\t" . trim($cand->fingerprint_template) . "\n";
+                }
+            }
+            file_put_contents($dbFile, $dbContent);
+
+            $cmd = escapeshellarg($exe) . ' identify --probe-file ' . escapeshellarg($probeFile) . ' --db-file ' . escapeshellarg($dbFile);
+            $output = shell_exec($cmd);
+
+            @unlink($probeFile);
+            @unlink($dbFile);
+
+            if ($output && preg_match('/\[JSON\](.*?)\[\/JSON\]/s', $output, $m)) {
+                $data = json_decode($m[1], true);
+                if (!empty($data['matched']) && !empty($data['candidateId'])) {
+                    $matchedId = (int) $data['candidateId'];
+                    return $candidatesWithBiometrics->firstWhere('id', $matchedId);
+                }
+            }
         }
 
-        $len1 = strlen($b1);
-        $len2 = strlen($b2);
-        if ($len1 < 10 || $len2 < 10) {
-            return 0;
-        }
-
-        // Calculate byte-level n-gram Jaccard overlap on minutiae bytes
-        $chunkSize = 4;
-        $set1 = [];
-        for ($i = 0; $i <= $len1 - $chunkSize; $i += 2) {
-            $key = substr($b1, $i, $chunkSize);
-            $set1[$key] = ($set1[$key] ?? 0) + 1;
-        }
-
-        $set2 = [];
-        for ($i = 0; $i <= $len2 - $chunkSize; $i += 2) {
-            $key = substr($b2, $i, $chunkSize);
-            $set2[$key] = ($set2[$key] ?? 0) + 1;
-        }
-
-        $intersection = 0;
-        $union = 0;
-        $allKeys = array_unique(array_merge(array_keys($set1), array_keys($set2)));
-        foreach ($allKeys as $k) {
-            $c1 = $set1[$k] ?? 0;
-            $c2 = $set2[$k] ?? 0;
-            $intersection += min($c1, $c2);
-            $union += max($c1, $c2);
-        }
-
-        if ($union === 0) {
-            return 0;
-        }
-
-        $similarity = ($intersection / $union) * 100;
-        return (int) round($similarity);
+        return null;
     }
 
     // --------------------------------------------------------------------------
