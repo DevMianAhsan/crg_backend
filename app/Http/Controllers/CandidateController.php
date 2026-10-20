@@ -3823,6 +3823,14 @@ class CandidateController extends Controller
             }
         }
 
+        // Fallback: exact template matching if SecuGen executable is absent or on Linux
+        $trimmedLive = trim($liveTemplate);
+        foreach ($candidatesWithBiometrics as $cand) {
+            if (!empty($cand->fingerprint_template) && trim($cand->fingerprint_template) === $trimmedLive) {
+                return $cand;
+            }
+        }
+
         return null;
     }
 
