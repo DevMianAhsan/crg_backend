@@ -3750,10 +3750,16 @@ class CandidateController extends Controller
         }
 
         return response()->json([
-            'matched'   => false,
-            'score'     => 0,
-            'threshold' => 60,
-            'message'   => 'No candidate found matching this fingerprint scan in database.',
+            'matched'    => false,
+            'score'      => 0,
+            'threshold'  => 60,
+            'message'    => 'No candidate found matching this fingerprint scan in database.',
+            'candidates' => $candidatesWithBiometrics->map(fn (Candidate $c): array => [
+                'id'                  => (string) $c->id,
+                'name'                => trim("{$c->first_name} {$c->last_name}"),
+                'code'                => $c->code,
+                'fingerprintTemplate' => $c->fingerprint_template,
+            ])->values(),
         ]);
     }
 
