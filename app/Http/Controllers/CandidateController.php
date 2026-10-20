@@ -3666,7 +3666,13 @@ class CandidateController extends Controller
             ], 422);
         }
 
-        $liveTemplate = (string) ($request->input('template') ?? $request->input('liveTemplate') ?? '');
+        $liveTemplate = (string) (
+            $request->input('fingerprint_template')
+            ?? $request->input('fingerprintTemplate')
+            ?? $request->input('template')
+            ?? $request->input('liveTemplate')
+            ?? ''
+        );
         $clientScore  = $request->has('score') ? (int) $request->input('score') : null;
 
         if (empty($liveTemplate) && $clientScore === null) {
@@ -3704,7 +3710,13 @@ class CandidateController extends Controller
     {
         $this->requirePermission($request, 'candidates.view');
 
-        $liveTemplate = (string) ($request->input('template') ?? $request->input('liveTemplate') ?? '');
+        $liveTemplate = (string) (
+            $request->input('fingerprint_template')
+            ?? $request->input('fingerprintTemplate')
+            ?? $request->input('template')
+            ?? $request->input('liveTemplate')
+            ?? ''
+        );
         if (empty($liveTemplate)) {
             return response()->json([
                 'matched' => false,
