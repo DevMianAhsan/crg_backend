@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 class LedgerEntry extends Model
 {
@@ -23,6 +24,7 @@ class LedgerEntry extends Model
         'status',
         'description',
         'payment_method',
+        'slip_path',
         'cheque_number',
         'cheque_date',
         'created_by',
@@ -46,6 +48,19 @@ class LedgerEntry extends Model
                 $entry->date = now()->toDateString();
             }
         });
+    }
+
+    public function getSlipUrlAttribute(): ?string
+    {
+        if (! $this->slip_path) {
+            return null;
+        }
+
+        if (function_exists('request') && request()?->header('host')) {
+            return asset('storage/' . ltrim($this->slip_path, '/'));
+        }
+
+        return Storage::disk('public')->url($this->slip_path);
     }
 
     public function candidate(): BelongsTo

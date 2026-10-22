@@ -766,6 +766,39 @@ class CandidateController extends Controller
             'marital_status'       => 'civil_status',
             'kids'                 => 'children_count',
             'file_receiving_date'  => 'joined_date',
+            'foreign_visit'        => 'foreign_visit',
+            'foreign_visits'       => 'foreign_visit',
+            'foreign_visit_history'=> 'foreign_visit',
+            'travel_history'       => 'foreign_visit',
+            'embassy'              => 'embassy_details',
+            'ambacy'               => 'embassy_details',
+            'embassy_detail'       => 'embassy_details',
+            'ambacy_detail'        => 'embassy_details',
+            'embassy_details'      => 'embassy_details',
+            'ambacy_details'       => 'embassy_details',
+            'embassy_file_no'      => 'embassy_file_no',
+            'ambacy_file_no'       => 'embassy_file_no',
+            'embassy_file'         => 'embassy_file_no',
+            'file_no'              => 'embassy_file_no',
+            'embassy_category'     => 'embassy_category',
+            'ambacy_category'      => 'embassy_category',
+            'embassy_beneficiary_name'     => 'embassy_beneficiary_name',
+            'ambacy_beneficiary_name'      => 'embassy_beneficiary_name',
+            'beneficiary_name'             => 'embassy_beneficiary_name',
+            'embassy_beneficiary_relation' => 'embassy_beneficiary_relation',
+            'ambacy_beneficiary_relation'  => 'embassy_beneficiary_relation',
+            'beneficiary_relation'         => 'embassy_beneficiary_relation',
+            'embassy_beneficiary_id_card'  => 'embassy_beneficiary_id_card',
+            'ambacy_beneficiary_id_card'   => 'embassy_beneficiary_id_card',
+            'beneficiary_id_card'          => 'embassy_beneficiary_id_card',
+            'beneficiary_cnic'             => 'embassy_beneficiary_id_card',
+            'embassy_beneficiary_mobile'   => 'embassy_beneficiary_mobile',
+            'ambacy_beneficiary_mobile'    => 'embassy_beneficiary_mobile',
+            'beneficiary_mobile'           => 'embassy_beneficiary_mobile',
+            'beneficiary_phone'            => 'embassy_beneficiary_mobile',
+            'embassy_work_permit_issue_date' => 'embassy_work_permit_issue_date',
+            'ambacy_work_permit_issue_date'  => 'embassy_work_permit_issue_date',
+            'work_permit_issue_date'         => 'embassy_work_permit_issue_date',
         ];
 
         return $aliases[$clean] ?? $clean;
@@ -941,7 +974,7 @@ class CandidateController extends Controller
             'foreign_visit' => [
                 'label'    => 'Any Foreign Visit / Travel History',
                 'category' => 'Passport & Identity',
-                'resolver' => fn ($c) => $c->foreign_visit ?? '',
+                'resolver' => fn ($c) => $this->formatForeignVisitsForExport($c->foreign_visit),
             ],
 
             // Contact & Location
@@ -1085,7 +1118,133 @@ class CandidateController extends Controller
                     return $hasPermit ? 'Yes' : 'No';
                 },
             ],
+
+            // Embassy / Ambacy Details
+            'embassy_details' => [
+                'label'    => 'Embassy / Ambacy Details (Summary)',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    if (empty($emb)) return '';
+                    $parts = array_filter([
+                        !empty($emb['fileNo'] ?? $emb['file_no'] ?? null) ? 'File: ' . ($emb['fileNo'] ?? $emb['file_no']) : null,
+                        !empty($emb['category']) ? 'Category: ' . $emb['category'] : null,
+                        !empty($emb['beneficiaryName'] ?? $emb['beneficiary_name'] ?? null)
+                            ? 'Beneficiary: ' . ($emb['beneficiaryName'] ?? $emb['beneficiary_name']) . (!empty($emb['beneficiaryRelation'] ?? $emb['beneficiary_relation'] ?? null) ? ' (' . ($emb['beneficiaryRelation'] ?? $emb['beneficiary_relation']) . ')' : '')
+                            : null,
+                        !empty($emb['beneficiaryIdCard'] ?? $emb['beneficiary_id_card'] ?? null) ? 'CNIC: ' . ($emb['beneficiaryIdCard'] ?? $emb['beneficiary_id_card']) : null,
+                        !empty($emb['beneficiaryMobile'] ?? $emb['beneficiary_mobile'] ?? null) ? 'Mobile: ' . ($emb['beneficiaryMobile'] ?? $emb['beneficiary_mobile']) : null,
+                        !empty($emb['workPermitIssueDate'] ?? $emb['work_permit_issue_date'] ?? null) ? 'Issue Date: ' . ($emb['workPermitIssueDate'] ?? $emb['work_permit_issue_date']) : null,
+                    ]);
+                    return implode(' | ', $parts);
+                },
+            ],
+            'embassy_file_no' => [
+                'label'    => 'Embassy File No',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    return (string) ($emb['fileNo'] ?? $emb['file_no'] ?? '');
+                },
+            ],
+            'embassy_category' => [
+                'label'    => 'Embassy / Visa Category',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    return (string) ($emb['category'] ?? '');
+                },
+            ],
+            'embassy_beneficiary_name' => [
+                'label'    => 'Beneficiary Name (Embassy)',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    return (string) ($emb['beneficiaryName'] ?? $emb['beneficiary_name'] ?? '');
+                },
+            ],
+            'embassy_beneficiary_relation' => [
+                'label'    => 'Beneficiary Relation (Embassy)',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    return (string) ($emb['beneficiaryRelation'] ?? $emb['beneficiary_relation'] ?? '');
+                },
+            ],
+            'embassy_beneficiary_id_card' => [
+                'label'    => 'Beneficiary ID Card No (Embassy)',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    return (string) ($emb['beneficiaryIdCard'] ?? $emb['beneficiary_id_card'] ?? '');
+                },
+            ],
+            'embassy_beneficiary_mobile' => [
+                'label'    => 'Beneficiary Mobile No (Embassy)',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    return (string) ($emb['beneficiaryMobile'] ?? $emb['beneficiary_mobile'] ?? '');
+                },
+            ],
+            'embassy_work_permit_issue_date' => [
+                'label'    => 'Work Permit Issue Date (Embassy)',
+                'category' => 'Embassy / Ambacy Details',
+                'resolver' => function ($c) {
+                    $emb = is_array($c->embassy_details) ? $c->embassy_details : (json_decode($c->embassy_details ?? '', true) ?: []);
+                    $date = $emb['workPermitIssueDate'] ?? $emb['work_permit_issue_date'] ?? null;
+                    if (!$date) return '';
+                    try {
+                        return \Carbon\Carbon::parse($date)->format('d/m/Y');
+                    } catch (\Throwable) {
+                        return (string) $date;
+                    }
+                },
+            ],
         ];
+    }
+
+    /**
+     * Format foreign visits list into human-readable text for Excel export without JSON braces.
+     */
+    private function formatForeignVisitsForExport($raw): string
+    {
+        if (empty($raw)) {
+            return '';
+        }
+
+        $visits = is_array($raw) ? $raw : json_decode((string) $raw, true);
+        if (!is_array($visits)) {
+            $str = trim((string) $raw);
+            return (str_starts_with($str, '[') || str_starts_with($str, '{')) ? '' : $str;
+        }
+
+        $entries = [];
+        foreach ($visits as $v) {
+            if (!is_array($v)) continue;
+            $parts = [];
+            if (!empty($v['country'])) {
+                $parts[] = trim($v['country']);
+            }
+            $cat = $v['visaCategory'] ?? $v['visa_category'] ?? null;
+            if (!empty($cat)) {
+                $parts[] = ucwords(trim($cat));
+            }
+            $going = $v['goingDate'] ?? $v['going_date'] ?? null;
+            $back = $v['comingBackDate'] ?? $v['coming_back_date'] ?? null;
+            if (!empty($going) || !empty($back)) {
+                $parts[] = '(' . ($going ?: '?') . ' to ' . ($back ?: 'Present') . ')';
+            }
+            $work = $v['workCategory'] ?? $v['work_category'] ?? null;
+            if (!empty($work)) {
+                $parts[] = 'Work: ' . trim($work);
+            }
+            if (!empty($parts)) {
+                $entries[] = implode(' • ', $parts);
+            }
+        }
+
+        return implode(' | ', $entries);
     }
 
     // --------------------------------------------------------------------------
@@ -1990,6 +2149,8 @@ class CandidateController extends Controller
             'license'           => ['sometimes', 'nullable', 'string', 'max:150'],
             'foreignVisit'      => ['sometimes', 'nullable'],
             'foreign_visit'     => ['sometimes', 'nullable'],
+            'embassyDetails'    => ['sometimes', 'nullable'],
+            'embassy_details'   => ['sometimes', 'nullable'],
         ];
         $data = $request->validate($rules);
 
@@ -2038,6 +2199,16 @@ class CandidateController extends Controller
                 $updates['children_details'] = is_array($decoded) ? $decoded : null;
             } else {
                 $updates['children_details'] = $rawChildren;
+            }
+        }
+
+        if ($request->has('embassyDetails') || $request->has('embassy_details')) {
+            $rawEmbassy = $request->input('embassyDetails') ?? $request->input('embassy_details');
+            if (is_string($rawEmbassy)) {
+                $decoded = json_decode($rawEmbassy, true);
+                $updates['embassy_details'] = is_array($decoded) ? $decoded : null;
+            } else {
+                $updates['embassy_details'] = $rawEmbassy;
             }
         }
 
@@ -2583,6 +2754,8 @@ class CandidateController extends Controller
             'status',
             'recruitment_stage',
             'company',
+            'foreign_visit',
+            'embassy_details',
             'documents_count',
             'documents_list',
         ];
@@ -2726,7 +2899,9 @@ class CandidateController extends Controller
                 'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
                 'hasFingerprint'        => ! empty($candidate->fingerprint_path) || ! empty($candidate->fingerprint_template),
                 'agreementToken'        => $candidate->agreement_token,
-                'termsAgreedAt'         => $candidate->terms_agreed_at?->toIso8601String(),
+                'termsAgreedAt'         => $candidate->terms_agreed_at?->toIso8601String()
+                    ?? $candidate->fingerprint_captured_at?->toIso8601String()
+                    ?? (($candidate->signature_path || $candidate->fingerprint_path) ? ($candidate->updated_at?->toIso8601String() ?? $candidate->created_at?->toIso8601String()) : null),
                 'hasAgreed'             => ! empty($candidate->terms_agreed_at) || ! empty($candidate->signature_path) || ! empty($candidate->fingerprint_path),
                 'balance'               => (float) ($candidate->balance ?? 0),
                 'currency'              => 'PKR',
@@ -2861,7 +3036,9 @@ class CandidateController extends Controller
                 'fingerprintQuality'    => $candidate->fingerprint_quality,
                 'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
                 'hasFingerprint'        => ! empty($candidate->fingerprint_path) || ! empty($candidate->fingerprint_template),
-                'termsAgreedAt'         => $candidate->terms_agreed_at?->toIso8601String(),
+                'termsAgreedAt'         => $candidate->terms_agreed_at?->toIso8601String()
+                    ?? $candidate->fingerprint_captured_at?->toIso8601String()
+                    ?? (($candidate->signature_path || $candidate->fingerprint_path) ? ($candidate->updated_at?->toIso8601String() ?? $candidate->created_at?->toIso8601String()) : null),
                 'hasAgreed'             => true,
                 'agreementToken'        => $candidate->agreement_token,
                 'balance'               => (float) ($candidate->balance ?? 0),
@@ -3630,12 +3807,22 @@ class CandidateController extends Controller
             $fingerprintQuality = (int) ($request->input('fingerprint_quality') ?? $request->input('fingerprintQuality'));
         }
 
+        $termsAgreedAt = $candidate->terms_agreed_at;
+        if ($request->boolean('removeSignature') && $request->boolean('removeFingerprint')) {
+            $termsAgreedAt = null;
+        } elseif ($signaturePath || $fingerprintPath || $fingerprintTemplate) {
+            if (! $termsAgreedAt) {
+                $termsAgreedAt = now();
+            }
+        }
+
         $candidate->update([
             'signature_path'          => $signaturePath,
             'fingerprint_path'        => $fingerprintPath,
             'fingerprint_template'    => $fingerprintTemplate,
             'fingerprint_quality'     => $fingerprintQuality,
             'fingerprint_captured_at' => $fingerprintCapturedAt,
+            'terms_agreed_at'         => $termsAgreedAt,
         ]);
         $candidate->load(['company', 'documents', 'submissions.company', 'withdrawal']);
 
@@ -3885,7 +4072,9 @@ class CandidateController extends Controller
             'fingerprintQuality'  => $candidate->fingerprint_quality,
             'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
             'agreementToken'      => $candidate->ensureAgreementToken(),
-            'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
+            'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String()
+                ?? $candidate->fingerprint_captured_at?->toIso8601String()
+                ?? (($candidate->signature_path || $candidate->fingerprint_path) ? ($candidate->updated_at?->toIso8601String() ?? $candidate->created_at?->toIso8601String()) : null),
             'nationality'         => $candidate->nationality,
             'currentLocation'     => $candidate->current_location,
             'address'             => $candidate->address,
@@ -3962,7 +4151,9 @@ class CandidateController extends Controller
             'fingerprintCapturedAt' => $candidate->fingerprint_captured_at?->toIso8601String(),
             'hasFingerprint'      => ! empty($candidate->fingerprint_path) || ! empty($candidate->fingerprint_template),
             'agreementToken'      => $candidate->ensureAgreementToken(),
-            'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String(),
+            'termsAgreedAt'       => $candidate->terms_agreed_at?->toIso8601String()
+                ?? $candidate->fingerprint_captured_at?->toIso8601String()
+                ?? (($candidate->signature_path || $candidate->fingerprint_path) ? ($candidate->updated_at?->toIso8601String() ?? $candidate->created_at?->toIso8601String()) : null),
             'balance'             => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
             'serviceCharges'      => (float) ($candidate->service_charges ?? $candidate->balance ?? 0),
             'countryServiceCharges' => $candidate->country_service_charges ?? [],

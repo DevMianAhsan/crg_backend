@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\LedgerEntry;
+use App\Services\DocumentCompressionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class LedgerController extends Controller
 {
@@ -82,13 +84,52 @@ class LedgerController extends Controller
             'cheque_number' => ['nullable', 'string', 'max:100'],
             'chequeDate' => ['nullable', 'date'],
             'cheque_date' => ['nullable', 'date'],
+            'slip' => ['nullable'],
+            'slip_file' => ['nullable'],
         ]);
 
         $candidateId = $data['candidateId'] ?? $data['candidate_id'] ?? null;
         $companyId = $data['companyId'] ?? $data['company_id'] ?? null;
-        $paymentMethod = $data['paymentMethod'] ?? $data['payment_method'] ?? 'Bank Wire Transfer';
+        $paymentMethod = $data['paymentMethod'] ?? $data['payment_method'] ?? 'Bank Transfer';
         $chequeNumber = $data['chequeNumber'] ?? $data['cheque_number'] ?? null;
         $chequeDate = $data['chequeDate'] ?? $data['cheque_date'] ?? null;
+
+        // Store slip inside candidate's dedicated folder: candidates/{candidateId}/slips
+        $slipFolder = $candidateId ? "candidates/{$candidateId}/slips" : 'ledger/slips';
+
+        // Process and compress payment slip image (matching standard document compression: 1600px max, 80% quality)
+        $slipPath = null;
+        $compressionOptions = [
+            'max_dimension' => 1600,
+            'jpeg_quality' => 80,
+            'webp_quality' => 80,
+        ];
+
+        if ($request->hasFile('slip')) {
+            $comp = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('slip'),
+                $slipFolder,
+                'public',
+                $compressionOptions
+            );
+            $slipPath = $comp['path'];
+        } elseif ($request->hasFile('slip_file')) {
+            $comp = app(DocumentCompressionService::class)->storeAndCompress(
+                $request->file('slip_file'),
+                $slipFolder,
+                'public',
+                $compressionOptions
+            );
+            $slipPath = $comp['path'];
+        } elseif ($request->filled('slip') && is_string($request->input('slip')) && str_starts_with($request->input('slip'), 'data:image')) {
+            $slipPath = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('slip'),
+                $slipFolder,
+                'public',
+                'slip_',
+                $compressionOptions
+            );
+        }
 
         $entry = LedgerEntry::create([
             'date' => $data['date'] ?? now()->toDateString(),
@@ -100,6 +141,7 @@ class LedgerController extends Controller
             'status' => $data['status'] ?? 'paid',
             'description' => $data['description'] ?? null,
             'payment_method' => $paymentMethod,
+            'slip_path' => $slipPath,
             'cheque_number' => $chequeNumber,
             'cheque_date' => $chequeDate,
             'created_by' => $request->user()?->id,
@@ -151,6 +193,10 @@ class LedgerController extends Controller
             'cheque_number' => ['nullable', 'string', 'max:100'],
             'chequeDate' => ['nullable', 'date'],
             'cheque_date' => ['nullable', 'date'],
+            'slip' => ['nullable'],
+            'slip_file' => ['nullable'],
+            'removeSlip' => ['nullable', 'boolean'],
+            'delete_slip' => ['nullable', 'boolean'],
         ]);
 
         $updates = [];
@@ -174,6 +220,46 @@ class LedgerController extends Controller
         }
         if (array_key_exists('chequeDate', $data) || array_key_exists('cheque_date', $data)) {
             $updates['cheque_date'] = $data['chequeDate'] ?? $data['cheque_date'];
+        }
+
+        // Target candidate folder for slips
+        $targetCandidateId = $updates['candidate_id'] ?? $ledgerEntry->candidate_id;
+        $slipFolder = $targetCandidateId ? "candidates/{$targetCandidateId}/slips" : 'ledger/slips';
+        $compressionOptions = [
+            'max_dimension' => 1600,
+            'jpeg_quality' => 80,
+            'webp_quality' => 80,
+        ];
+
+        // Handle slip file updates
+        if ($request->hasFile('slip') || $request->hasFile('slip_file')) {
+            $file = $request->file('slip') ?? $request->file('slip_file');
+            if ($ledgerEntry->slip_path) {
+                Storage::disk('public')->delete($ledgerEntry->slip_path);
+            }
+            $comp = app(DocumentCompressionService::class)->storeAndCompress(
+                $file,
+                $slipFolder,
+                'public',
+                $compressionOptions
+            );
+            $updates['slip_path'] = $comp['path'];
+        } elseif ($request->filled('slip') && is_string($request->input('slip')) && str_starts_with($request->input('slip'), 'data:image')) {
+            if ($ledgerEntry->slip_path) {
+                Storage::disk('public')->delete($ledgerEntry->slip_path);
+            }
+            $updates['slip_path'] = app(DocumentCompressionService::class)->storeBase64AndCompress(
+                $request->input('slip'),
+                $slipFolder,
+                'public',
+                'slip_',
+                $compressionOptions
+            );
+        } elseif ($request->boolean('removeSlip') || $request->boolean('delete_slip')) {
+            if ($ledgerEntry->slip_path) {
+                Storage::disk('public')->delete($ledgerEntry->slip_path);
+            }
+            $updates['slip_path'] = null;
         }
 
         $ledgerEntry->update($updates);
@@ -210,7 +296,9 @@ class LedgerController extends Controller
             'currency' => $entry->currency ?? 'PKR',
             'status' => $entry->status,
             'description' => $entry->description ?? '',
-            'paymentMethod' => $entry->payment_method ?? 'Bank Wire Transfer',
+            'paymentMethod' => $entry->payment_method ?? 'Bank Transfer',
+            'slipPath' => $entry->slip_path,
+            'slipUrl' => $entry->slip_url,
             'chequeNumber' => $entry->cheque_number,
             'chequeDate' => $entry->cheque_date ? $entry->cheque_date->toDateString() : null,
             'createdAt' => $entry->created_at?->toIso8601String(),
